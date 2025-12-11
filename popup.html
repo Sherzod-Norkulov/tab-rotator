@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>Tab Rotator</title>
@@ -383,20 +383,20 @@
 <body>
   <div id="status"></div>
   <div class="actions">
-    <button id="start" class="primary">Запустить</button>
-    <button id="stop" class="secondary">Остановить</button>
+    <button id="start" class="primary" data-i18n="start"></button>
+    <button id="stop" class="secondary" data-i18n="stop"></button>
   </div>
 
   <div class="card">
     <label>
-      <span class="title">Интервал переключения</span>
+      <span class="title" data-i18n="label_interval"></span>
       <div style="display:flex;align-items:center;gap:6px;">
         <input id="interval" type="number" min="1" step="1" value="5" />
-        <span class="suffix">сек</span>
+        <span class="suffix" data-i18n="suffix_seconds"></span>
       </div>
     </label>
     <label>
-      <span class="title">Запускать ротатор при старте браузера</span>
+      <span class="title" data-i18n="label_autostart"></span>
       <input id="autoStart" type="checkbox" />
     </label>
   </div>
@@ -406,13 +406,13 @@
       <select id="profileSelect"></select>
     </div>
     <div class="profile-actions">
-      <button id="applyProfile" class="secondary small icon-btn" title="Применить">✅</button>
-      <button id="saveProfile" class="secondary small icon-btn" title="Сохранить">💾</button>
-      <button id="saveAsProfile" class="secondary small icon-btn" title="Сохранить как">📝</button>
-      <button id="editProfile" class="secondary small icon-btn" title="Изменить имя">✎</button>
-      <button id="deleteProfile" class="secondary small icon-btn" title="Удалить">✖</button>
-      <button id="exportProfile" class="secondary small icon-btn" title="Экспорт JSON">⭳</button>
-      <label class="secondary small icon-btn import-btn" style="cursor:pointer;" title="Импорт JSON">
+      <button id="applyProfile" class="secondary small icon-btn" data-i18n="title_apply" data-i18n-attr="title,aria-label">✅</button>
+      <button id="saveProfile" class="secondary small icon-btn" data-i18n="title_save" data-i18n-attr="title,aria-label">💾</button>
+      <button id="saveAsProfile" class="secondary small icon-btn" data-i18n="title_save_as" data-i18n-attr="title,aria-label">📝</button>
+      <button id="editProfile" class="secondary small icon-btn" data-i18n="title_edit" data-i18n-attr="title,aria-label">✎</button>
+      <button id="deleteProfile" class="secondary small icon-btn" data-i18n="title_delete" data-i18n-attr="title,aria-label">✖</button>
+      <button id="exportProfile" class="secondary small icon-btn" data-i18n="title_export" data-i18n-attr="title,aria-label">⭳</button>
+      <label class="secondary small icon-btn import-btn" style="cursor:pointer;" data-i18n="title_import" data-i18n-attr="title,aria-label">
         ⭱
         <input id="importProfile" type="file" accept="application/json" />
       </label>
@@ -421,48 +421,48 @@
 
   <div class="card">
     <label>
-      <span class="title">Использовать только указанный список вкладок</span>
+      <span class="title" data-i18n="label_use_custom_list"></span>
       <input id="useCustomList" type="checkbox" />
     </label>
 
     <div id="entries"></div>
-    <button id="addEntry" class="secondary small">+ Добавить страницу</button>
+    <button id="addEntry" class="secondary small" data-i18n="button_add_entry"></button>
 
-      <div class="inline-controls" style="flex-direction:column; gap:10px; margin-top:6px;">
-        <div class="inline-pair">
-          <span class="title">Открывать вкладки из списка перед запуском</span>
-          <input id="openCustomTabs" type="checkbox" />
-        </div>
-        <div class="inline-pair">
-          <span class="title">Открывать список в отдельном окне</span>
-          <input id="useDedicatedWindow" type="checkbox" />
-        </div>
+    <div class="inline-controls" style="flex-direction:column; gap:10px; margin-top:6px;">
+      <div class="inline-pair">
+        <span class="title" data-i18n="label_open_tabs"></span>
+        <input id="openCustomTabs" type="checkbox" />
+      </div>
+      <div class="inline-pair">
+        <span class="title" data-i18n="label_dedicated_window"></span>
+        <input id="useDedicatedWindow" type="checkbox" />
       </div>
     </div>
-
-  <div class="card">
-    <div class="row" style="margin-bottom:8px; align-items:center;">
-      <strong class="pill">Исключить домены</strong>
-      <label style="display:flex;align-items:center;gap:8px; margin:0;">
-        <span class="title" style="font-size:12px;">Включить</span>
-        <input id="excludeToggle" type="checkbox" />
-      </label>
-    </div>
-    <input id="excludeDomains" type="text" placeholder="example.com, mail.com" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border);" />
   </div>
 
   <div class="card">
-    <strong class="pill">Дополнительно</strong>
+    <div class="row" style="margin-bottom:8px; align-items:center;">
+      <strong class="pill" data-i18n="pill_exclude"></strong>
+      <label style="display:flex;align-items:center;gap:8px; margin:0;">
+        <span class="title" style="font-size:12px;" data-i18n="label_enable"></span>
+        <input id="excludeToggle" type="checkbox" />
+      </label>
+    </div>
+    <input id="excludeDomains" type="text" placeholder="" data-i18n="placeholder_exclude" data-i18n-attr="placeholder" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border);" />
+  </div>
+
+  <div class="card">
+    <strong class="pill" data-i18n="pill_extra"></strong>
     <div class="inline-controls" style="margin-top:8px;">
       <label style="margin:0; flex:1;">
-        <span class="title">Показывать таймер на иконке</span>
+        <span class="title" data-i18n="label_badge"></span>
         <input id="badgeCountdown" type="checkbox" />
       </label>
       <label style="margin:0; flex:1;">
-        <span class="title">Порядок</span>
+        <span class="title" data-i18n="label_order"></span>
         <select id="orderMode">
-          <option value="sequential">Последовательно</option>
-          <option value="shuffle">Случайно</option>
+          <option value="sequential" data-i18n="option_sequential"></option>
+          <option value="shuffle" data-i18n="option_shuffle"></option>
         </select>
       </label>
     </div>
@@ -470,7 +470,7 @@
 
   <div class="footer">
     <span class="dot" aria-hidden="true"></span>
-    <span>Автор: <a href="https://github.com/Sherzod-Norkulov" target="_blank" rel="noopener">Sherzod Norkulov</a></span>
+    <span><span data-i18n="footer_author"></span>: <a href="https://github.com/Sherzod-Norkulov" target="_blank" rel="noopener">Sherzod Norkulov</a></span>
   </div>
 
   <script src="popup.js"></script>

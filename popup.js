@@ -25,6 +25,36 @@ document.addEventListener('DOMContentLoaded', () => {
   let profiles = [];
   let uiRunning = false;
 
+  const t = (key, args = []) => {
+    const msg = chrome.i18n?.getMessage ? chrome.i18n.getMessage(key, args) : '';
+    return msg || key;
+  };
+
+  function applyI18n() {
+    const uiLang = (chrome.i18n?.getUILanguage?.() || navigator.language || 'en').split('-')[0];
+    document.documentElement.lang = uiLang;
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      const key = el.dataset.i18n;
+      if (!key) return;
+      const translated = t(key);
+      if (!translated) return;
+      const attr = el.dataset.i18nAttr;
+      if (attr) {
+        attr.split(',').forEach((attrName) => {
+          const name = attrName.trim();
+          if (!name) return;
+          if (name === 'textContent') {
+            el.textContent = translated;
+          } else {
+            el.setAttribute(name, translated);
+          }
+        });
+      } else {
+        el.textContent = translated;
+      }
+    });
+  }
+
   function setStatus(text, type) {
     statusEl.textContent = text;
     statusEl.className = type === 'ok' ? 'ok' : 'error';
@@ -50,6 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // initial visual state
   setRunningUi(false);
+  applyI18n();
 
   function createEntryRow(entry = {}) {
     const row = document.createElement('div');
@@ -72,13 +103,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
-    nameInput.placeholder = 'Название (опционально)';
+    nameInput.placeholder = t('entry_name_placeholder');
     nameInput.value = entry.name || '';
     nameInput.className = 'entry-name';
 
     const urlInput = document.createElement('input');
     urlInput.type = 'text';
-    urlInput.placeholder = 'https://example.com';
+    urlInput.placeholder = t('entry_url_placeholder');
     urlInput.value = entry.url || '';
     urlInput.className = 'entry-url';
 
@@ -94,7 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const refreshLabel = document.createElement('span');
     refreshLabel.className = 'control-label';
     refreshLabel.style.gridArea = 'rlabel';
-    refreshLabel.textContent = 'Обновлять';
+    refreshLabel.textContent = t('entry_refresh');
     const refreshDelayInput = document.createElement('input');
     refreshDelayInput.type = 'number';
     refreshDelayInput.min = '0';
@@ -108,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshDelayWrap.style.gridArea = 'rinput';
     const refreshSuffix = document.createElement('span');
     refreshSuffix.className = 'suffix-label';
-    refreshSuffix.textContent = 'сек';
+    refreshSuffix.textContent = t('suffix_seconds');
     refreshDelayWrap.append(refreshDelayInput, refreshSuffix);
 
     refreshCheckbox.addEventListener('change', () => {
@@ -126,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const timerLabel = document.createElement('span');
     timerLabel.className = 'control-label';
     timerLabel.style.gridArea = 'tlabel';
-    timerLabel.textContent = 'Своя задержка';
+    timerLabel.textContent = t('entry_custom_delay');
     const timerInput = document.createElement('input');
     timerInput.type = 'number';
     timerInput.min = '1';
@@ -143,7 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
     timerWrap.style.gridArea = 'tinput';
     const timerSuffix = document.createElement('span');
     timerSuffix.className = 'suffix-label';
-    timerSuffix.textContent = 'сек';
+    timerSuffix.textContent = t('suffix_seconds');
     timerWrap.append(timerInput, timerSuffix);
 
     timerCheckbox.addEventListener('change', () => {
@@ -153,9 +184,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const removeBtn = document.createElement('button');
-    removeBtn.textContent = 'Удалить';
+    removeBtn.textContent = t('entry_delete');
     removeBtn.className = 'secondary small remove';
-    removeBtn.title = 'Удалить строку';
+    removeBtn.title = t('entry_delete');
     removeBtn.style.gridArea = 'remove';
     removeBtn.style.justifySelf = 'center';
     removeBtn.style.minWidth = '90px';
@@ -289,12 +320,12 @@ document.addEventListener('DOMContentLoaded', () => {
     profileSelect.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Профиль по умолчанию';
+    placeholder.textContent = t('order_placeholder');
     profileSelect.appendChild(placeholder);
     profiles.forEach((p, idx) => {
       const opt = document.createElement('option');
       opt.value = idx;
-      opt.textContent = p.name || `Профиль ${idx + 1}`;
+      opt.textContent = p.name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`;
       profileSelect.appendChild(opt);
     });
   }
@@ -320,7 +351,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fillEntries(cfg.customEntries || []);
     toggleCustomControls();
     if (!silent) {
-      setStatus('Профиль применён.', 'ok');
+      setStatus(t('status_profile_applied'), 'ok');
     }
   }
 
@@ -370,9 +401,9 @@ document.addEventListener('DOMContentLoaded', () => {
       toggleCustomControls();
 
       if (data.isRunning) {
-        setStatus('Ротация запущена и переключает вкладки.', 'ok');
+        setStatus(t('status_rotation_running'), 'ok');
       } else {
-        setStatus('Ротация остановлена.', 'error');
+        setStatus(t('status_rotation_stopped'), 'error');
       }
       setRunningUi(Boolean(data.isRunning));
     }
@@ -397,29 +428,30 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  // Сохранить: обновляет выбранный профиль без запроса имени
+  // Save: update selected profile without asking for name
   saveProfileBtn.addEventListener('click', async () => {
     const idx = Number(profileSelect.value);
     if (!Number.isInteger(idx) || idx < 0 || idx >= profiles.length) {
-      setStatus('Выберите профиль или используйте «Сохранить как».', 'error');
+      setStatus(t('status_profile_select_first'), 'error');
       return;
     }
     profiles[idx].config = getCurrentConfig();
     await storageArea.set({ profiles });
-    setStatus(`Профиль «${profiles[idx].name || `Профиль ${idx + 1}`}» обновлён.`, 'ok');
+    const displayName = profiles[idx].name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`;
+    setStatus(t('status_profile_updated', [displayName]), 'ok');
     flashButton(saveProfileBtn);
   });
 
-  // Сохранить как: создаёт новый профиль с указанным именем
+  // Save as: creates a new profile with provided name
   saveAsProfileBtn.addEventListener('click', async () => {
-    const name = prompt('Название профиля', '');
+    const name = prompt(t('prompt_profile_name'), '');
     if (name === null) {
-      setStatus('Сохранение профиля отменено.', 'error');
+      setStatus(t('status_profile_save_cancel'), 'error');
       return;
     }
     const trimmed = name.trim();
     if (!trimmed) {
-      setStatus('Введите имя профиля.', 'error');
+      setStatus(t('status_profile_name_required'), 'error');
       return;
     }
     const config = getCurrentConfig();
@@ -432,7 +464,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderProfiles();
     profileSelect.value = String(existingIdx >= 0 ? existingIdx : profiles.length - 1);
     await storageArea.set({ profiles });
-    setStatus(`Профиль «${trimmed}» сохранён.`, 'ok');
+    setStatus(t('status_profile_saved', [trimmed]), 'ok');
     flashButton(saveAsProfileBtn);
   });
 
@@ -442,24 +474,27 @@ document.addEventListener('DOMContentLoaded', () => {
     profiles.splice(idx, 1);
     renderProfiles();
     await storageArea.set({ profiles });
-    setStatus('Профиль удалён.', 'ok');
+    setStatus(t('status_profile_deleted'), 'ok');
   });
 
   editProfileBtn.addEventListener('click', async () => {
     const idx = Number(profileSelect.value);
     if (!Number.isInteger(idx) || idx < 0 || idx >= profiles.length) {
-      setStatus('Выберите профиль для изменения.', 'error');
+      setStatus(t('status_profile_choose'), 'error');
       return;
     }
     const current = profiles[idx];
-    const nameInput = prompt('Новое имя профиля', current.name || `Профиль ${idx + 1}`);
+    const nameInput = prompt(
+      t('prompt_profile_name'),
+      current.name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`
+    );
     if (nameInput === null) {
-      setStatus('Переименование отменено.', 'error');
+      setStatus(t('prompt_profile_rename_cancel'), 'error');
       return;
     }
     const trimmed = nameInput.trim();
     if (!trimmed) {
-      setStatus('Введите имя профиля.', 'error');
+      setStatus(t('status_profile_name_required'), 'error');
       return;
     }
     const cfg = getCurrentConfig();
@@ -467,7 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderProfiles();
     profileSelect.value = String(idx);
     await storageArea.set({ profiles });
-    setStatus(`Профиль переименован в «${trimmed}» и обновлён.`, 'ok');
+    setStatus(t('status_profile_renamed', [trimmed]), 'ok');
     flashButton(editProfileBtn);
   });
 
@@ -481,15 +516,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectedValue = profileSelect.value;
     const idx = Number(selectedValue);
     if (selectedValue === '' || !Number.isInteger(idx) || idx < 0 || idx >= profiles.length) {
-      // без выбранного профиля просто оставляем текущие значения в форме
+      // if no profile selected, keep current form values
       flashButton(applyProfileBtn);
-      setStatus('Профиль по умолчанию. Текущие значения оставлены.', 'error');
+      setStatus(t('status_profile_default'), 'error');
       return;
     }
+    const profileName = profiles[idx].name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`;
     const cfg = profiles[idx].config;
     applyConfig(cfg);
     flashButton(applyProfileBtn);
-    setStatus(`Профиль «${profiles[idx].name || `Профиль ${idx + 1}`}» применён к форме.`, 'ok');
+    setStatus(
+      t(
+        'status_profile_applied_named',
+        [profileName]
+      ),
+      'ok'
+    );
   });
 
   exportProfileBtn.addEventListener('click', () => {
@@ -513,7 +555,7 @@ document.addEventListener('DOMContentLoaded', () => {
     a.download = `tab-rotator-${name}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    setStatus('Экспорт готов.', 'ok');
+    setStatus(t('status_export_ready'), 'ok');
   });
 
   importProfileInput.addEventListener('change', async (e) => {
@@ -523,7 +565,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const json = JSON.parse(text);
       const importedName =
-        (file.name && file.name.replace(/\.[^/.]+$/, '')) || 'Импортированный профиль';
+        (file.name && file.name.replace(/\.[^/.]+$/, '')) || t('imported_profile_name');
 
       const ensureArray = (arr) => (Array.isArray(arr) ? arr : []);
       const incomingProfiles = ensureArray(json.profiles);
@@ -536,7 +578,7 @@ document.addEventListener('DOMContentLoaded', () => {
         appliedConfig = profiles[0]?.config || null;
         selectedIndex = 0;
       } else {
-        // поддержка формата { name, ...config } без profiles
+        // support for { name, ...config } without profiles array
         if (!incomingProfiles.length && json.name && json.intervalSec !== undefined) {
           const simpleCfg = { ...json };
           profiles.push({ name: json.name, config: simpleCfg });
@@ -567,9 +609,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (profiles.length) {
         profileSelect.value = String(selectedIndex);
       }
-      setStatus('Импорт завершён.', 'ok');
+      setStatus(t('status_import_ok'), 'ok');
     } catch (err) {
-      setStatus('Не удалось импортировать JSON', 'error');
+      setStatus(t('status_import_fail'), 'error');
     }
     importProfileInput.value = '';
   });
@@ -580,13 +622,13 @@ document.addEventListener('DOMContentLoaded', () => {
     stopBtn.disabled = true;
 
     if (!Number.isFinite(cfg.intervalSec) || cfg.intervalSec < 1) {
-      setStatus('Интервал должен быть не меньше 1 секунды.', 'error');
+      setStatus(t('status_interval_invalid'), 'error');
       setRunningUi(false);
       return;
     }
 
     if (cfg.useCustomList && (!cfg.customEntries.length || cfg.customEntries.length < 2)) {
-      setStatus('Нужно минимум 2 строки в списке вкладок.', 'error');
+      setStatus(t('status_list_too_short'), 'error');
       setRunningUi(false);
       return;
     }
@@ -599,20 +641,25 @@ document.addEventListener('DOMContentLoaded', () => {
       { type: 'START', ...payload },
       (response) => {
         if (chrome.runtime.lastError) {
-          setStatus(`Ошибка: ${chrome.runtime.lastError.message}`, 'error');
+          setStatus(
+            t('status_error_prefix', [chrome.runtime.lastError.message]),
+            'error'
+          );
           setRunningUi(false);
           return;
         }
 
         if (response && response.ok) {
-          const listInfo = cfg.useCustomList ? `(${cfg.customEntries.length} строк списка)` : '(все вкладки окна)';
-          setStatus(`Ротация запущена ${listInfo}.`, 'ok');
+          const listInfo = cfg.useCustomList
+            ? t('list_info_custom', [cfg.customEntries.length])
+            : t('list_info_all_tabs');
+          setStatus(t('status_rotation_started', [listInfo]), 'ok');
           setRunningUi(true);
         } else if (response && response.error === 'INVALID_INTERVAL') {
-          setStatus('Интервал должен быть не меньше 1 секунды.', 'error');
+          setStatus(t('status_interval_invalid'), 'error');
           setRunningUi(false);
         } else {
-          setStatus('Не удалось запустить ротатор. Проверьте настройки.', 'error');
+          setStatus(t('status_rotation_start_fail'), 'error');
           setRunningUi(false);
         }
       }
@@ -623,16 +670,19 @@ document.addEventListener('DOMContentLoaded', () => {
     stopBtn.disabled = true;
     chrome.runtime.sendMessage({ type: 'STOP' }, (response) => {
       if (chrome.runtime.lastError) {
-        setStatus(`Ошибка: ${chrome.runtime.lastError.message}`, 'error');
+        setStatus(
+          t('status_error_prefix', [chrome.runtime.lastError.message]),
+          'error'
+        );
         setRunningUi(true);
         return;
       }
 
       if (response && response.ok) {
-        setStatus('Ротация остановлена.', 'error');
+        setStatus(t('status_rotation_stopped'), 'error');
         setRunningUi(false);
       } else {
-        setStatus('Не удалось остановить ротатор.', 'error');
+        setStatus(t('status_rotation_stop_fail'), 'error');
         setRunningUi(true);
       }
     });

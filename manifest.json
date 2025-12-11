@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Tab Rotator",
+  "name": "__MSG_extName__",
   "version": "1.0.0",
-  "description": "Гибкая ротация вкладок: общий интервал, индивидуальные таймеры, автообновление, профили и экспорт/импорт настроек.",
+  "default_locale": "en",
+  "description": "__MSG_extDescription__",
   "author": "Sherzod Norkulov",
   "homepage_url": "https://github.com/Sherzod-Norkulov",
   "permissions": [
