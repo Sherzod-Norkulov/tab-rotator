@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Rotator",
+  "version": "1.0.0",
+  "description": "Гибкая ротация вкладок: общий интервал, индивидуальные таймеры, автообновление, профили и экспорт/импорт настроек.",
+  "author": "Sherzod Norkulov",
+  "homepage_url": "https://github.com/Sherzod-Norkulov",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Tab Rotator",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  }
+}

@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tab Rotator</title>
+  <style>
+    :root {
+      --bg: #f7f8fc;
+      --panel: #ffffff;
+      --border: #e5e8f0;
+      --accent: #7c9cf5;
+      --accent-strong: #6a8af0;
+      --accent-soft: #e9edff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --error: #e45858;
+      --ok: #1fa97a;
+      --shadow: 0 10px 28px rgba(76, 103, 186, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 10px;
+      font-family: "Inter", "Segoe UI", "Roboto", sans-serif;
+      background: radial-gradient(circle at 12% 16%, rgba(124, 156, 245, 0.22), transparent 32%),
+                  radial-gradient(circle at 82% 8%, rgba(147, 197, 253, 0.18), transparent 32%),
+                  radial-gradient(circle at 76% 72%, rgba(76, 201, 240, 0.16), transparent 32%),
+                  var(--bg);
+      color: var(--text);
+      min-width: 320px;
+      max-width: 400px;
+    }
+
+    h1 { margin: 0 0 6px; font-size: 18px; letter-spacing: 0.2px; }
+    .subtitle { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px;
+      margin-top: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    label .title { flex: 1; white-space: nowrap; }
+
+    .suffix {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    input[type="number"] {
+      width: 100px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--accent-soft);
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    input[type="checkbox"] { margin-right: 8px; accent-color: var(--accent); transform: scale(1.05); }
+
+    .actions { display: flex; gap: 10px; margin-top: 12px; }
+
+    button {
+      flex: 1;
+      padding: 10px 12px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      transition: transform 0.08s ease, box-shadow 0.15s ease;
+    }
+
+    button.primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      color: white;
+      box-shadow: 0 10px 24px rgba(124, 156, 245, 0.35);
+    }
+
+    button.secondary { background: #f1f5f9; color: var(--text); border: 1px solid var(--border); }
+    button.small { flex: 0; padding: 8px 10px; font-weight: 600; }
+    button:hover { transform: translateY(-1px); }
+    button:disabled {
+      background: #e5e7eb !important;
+      color: #9ca3af !important;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+    button.danger {
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      color: white;
+      border: 1px solid #fca5a5;
+      box-shadow: 0 10px 24px rgba(239, 68, 68, 0.2);
+    }
+
+    #status { margin-top: 10px; font-weight: 700; font-size: 13px; }
+    #status.ok { color: var(--ok); }
+    #status.error { color: var(--error); }
+
+    .footer {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: linear-gradient(135deg, rgba(124,156,245,0.12), rgba(147,197,253,0.14));
+      font-size: 12px;
+      line-height: 1.5;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .footer .dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      box-shadow: 0 0 0 4px rgba(124,156,245,0.12);
+    }
+
+    .footer a {
+      color: var(--accent-strong);
+      font-weight: 700;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(106, 138, 240, 0.4);
+    }
+
+    .footer a:hover { color: #4f46e5; }
+
+    /* Entries */
+    .entry {
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      grid-template-areas:
+        "order name"
+        "order url"
+        "controls controls";
+      gap: 6px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--accent-soft);
+      margin-bottom: 8px;
+    }
+
+    .entry input[type="text"] {
+      width: 100%;
+      min-width: 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+    }
+
+    .entry .entry-name {
+      grid-area: name;
+    }
+
+    .entry .entry-url {
+      grid-area: url;
+    }
+
+    .entry .toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .entry .timer {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .entry .timer input[type="number"] {
+      width: 70px;
+      padding: 6px 8px;
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .entry .remove {
+      background: #fef2f2;
+      color: #b91c1c;
+      border: 1px solid #fecdd3;
+      margin-left: auto;
+    }
+
+    .entry .remove:hover { transform: translateY(-1px); }
+
+    .entry-controls {
+      grid-area: controls;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      grid-template-rows: auto auto auto;
+      gap: 8px 10px;
+      align-items: center;
+      grid-template-areas:
+        "rlabel rinput rcheck"
+        "tlabel tinput tcheck"
+        "remove remove remove";
+    }
+    .control-label { font-size: 13px; color: var(--text); }
+    .suffix-input {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .suffix-input input {
+      width: 80px;
+      padding-right: 32px;
+      text-align: center;
+    }
+    .suffix-input .suffix-label {
+      position: absolute;
+      right: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      pointer-events: none;
+    }
+
+    .order-controls {
+      grid-area: order;
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      align-items: start;
+      gap: 4px;
+      min-width: 60px;
+    }
+
+    .order-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      align-items: center;
+    }
+
+    .order-controls button {
+      padding: 0;
+      min-width: 0;
+      width: 24px;
+      height: 20px;
+      border-radius: 8px;
+    }
+
+    .order-label {
+      width: 100%;
+      text-align: center;
+      font-weight: 700;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1;
+      padding-top: 4px;
+    }
+
+    .field-enabled {
+      background: #fff !important;
+    }
+
+    .field-disabled {
+      background: #eef1f8 !important;
+    }
+
+    .inline-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+    .inline-pair {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .row input[type="text"] {
+      flex: 1;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+
+    .profile-grid { display: block; margin-top: 8px; }
+    .profile-grid select { width: 100%; }
+
+    .profile-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: nowrap;
+      overflow: hidden;
+      margin-top: 12px;
+      justify-content: space-between;
+    }
+
+    select {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      min-width: 160px;
+    }
+
+    .pill {
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .import-btn input[type="file"] { display: none; }
+    .import-btn {
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .icon-btn {
+      flex: 1;
+      min-width: 40px;
+      max-width: 40px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      line-height: 1;
+      padding: 0;
+      border-radius: 10px;
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    @keyframes flash {
+      0% { transform: scale(1); box-shadow: 0 0 0 rgba(124,156,245,0.4); }
+      50% { transform: scale(1.05); box-shadow: 0 0 18px rgba(124,156,245,0.4); }
+      100% { transform: scale(1); box-shadow: 0 0 0 rgba(124,156,245,0); }
+    }
+    .flash {
+      animation: flash 0.45s ease;
+    }
+
+    #addEntry {
+      padding: 6px 10px;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="status"></div>
+  <div class="actions">
+    <button id="start" class="primary">Запустить</button>
+    <button id="stop" class="secondary">Остановить</button>
+  </div>
+
+  <div class="card">
+    <label>
+      <span class="title">Интервал переключения</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input id="interval" type="number" min="1" step="1" value="5" />
+        <span class="suffix">сек</span>
+      </div>
+    </label>
+    <label>
+      <span class="title">Запускать ротатор при старте браузера</span>
+      <input id="autoStart" type="checkbox" />
+    </label>
+  </div>
+
+  <div class="card">
+    <div class="profile-grid">
+      <select id="profileSelect"></select>
+    </div>
+    <div class="profile-actions">
+      <button id="applyProfile" class="secondary small icon-btn" title="Применить">✅</button>
+      <button id="saveProfile" class="secondary small icon-btn" title="Сохранить">💾</button>
+      <button id="saveAsProfile" class="secondary small icon-btn" title="Сохранить как">📝</button>
+      <button id="editProfile" class="secondary small icon-btn" title="Изменить имя">✎</button>
+      <button id="deleteProfile" class="secondary small icon-btn" title="Удалить">✖</button>
+      <button id="exportProfile" class="secondary small icon-btn" title="Экспорт JSON">⭳</button>
+      <label class="secondary small icon-btn import-btn" style="cursor:pointer;" title="Импорт JSON">
+        ⭱
+        <input id="importProfile" type="file" accept="application/json" />
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>
+      <span class="title">Использовать только указанный список вкладок</span>
+      <input id="useCustomList" type="checkbox" />
+    </label>
+
+    <div id="entries"></div>
+    <button id="addEntry" class="secondary small">+ Добавить страницу</button>
+
+      <div class="inline-controls" style="flex-direction:column; gap:10px; margin-top:6px;">
+        <div class="inline-pair">
+          <span class="title">Открывать вкладки из списка перед запуском</span>
+          <input id="openCustomTabs" type="checkbox" />
+        </div>
+        <div class="inline-pair">
+          <span class="title">Открывать список в отдельном окне</span>
+          <input id="useDedicatedWindow" type="checkbox" />
+        </div>
+      </div>
+    </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px; align-items:center;">
+      <strong class="pill">Исключить домены</strong>
+      <label style="display:flex;align-items:center;gap:8px; margin:0;">
+        <span class="title" style="font-size:12px;">Включить</span>
+        <input id="excludeToggle" type="checkbox" />
+      </label>
+    </div>
+    <input id="excludeDomains" type="text" placeholder="example.com, mail.com" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border);" />
+  </div>
+
+  <div class="card">
+    <strong class="pill">Дополнительно</strong>
+    <div class="inline-controls" style="margin-top:8px;">
+      <label style="margin:0; flex:1;">
+        <span class="title">Показывать таймер на иконке</span>
+        <input id="badgeCountdown" type="checkbox" />
+      </label>
+      <label style="margin:0; flex:1;">
+        <span class="title">Порядок</span>
+        <select id="orderMode">
+          <option value="sequential">Последовательно</option>
+          <option value="shuffle">Случайно</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="dot" aria-hidden="true"></span>
+    <span>Автор: <a href="https://github.com/Sherzod-Norkulov" target="_blank" rel="noopener">Sherzod Norkulov</a></span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
