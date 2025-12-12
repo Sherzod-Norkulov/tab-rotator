@@ -24,6 +24,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const storageArea = chrome.storage.local;
   let profiles = [];
   let uiRunning = false;
+  const NO_PROFILE_SELECTED = -1;
+  let lastSelectedProfileIndex = NO_PROFILE_SELECTED;
+  let autoPersistTimer = null;
+  let defaultConfigCache = null;
+  let isInitializing = true;
 
   const t = (key, args = []) => {
     const msg = chrome.i18n?.getMessage ? chrome.i18n.getMessage(key, args) : '';
@@ -81,6 +86,33 @@ document.addEventListener('DOMContentLoaded', () => {
   // initial visual state
   setRunningUi(false);
   applyI18n();
+
+  const parseProfileIndex = (value) => {
+    if (value === '' || value === null || value === undefined) {
+      return NO_PROFILE_SELECTED;
+    }
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? NO_PROFILE_SELECTED : parsed;
+  };
+
+  const configFromData = (src = {}) => {
+    const entries = Array.isArray(src.customEntries) && src.customEntries.length
+      ? src.customEntries
+      : src.customUrls || [];
+    return {
+      intervalSec: Number.isFinite(src.intervalSec) ? src.intervalSec : 5,
+      autoStart: Boolean(src.autoStart),
+      useCustomList: Boolean(src.useCustomList) || entries.length > 0,
+      customEntries: entries,
+      openCustomTabs: src.openCustomTabs !== undefined ? Boolean(src.openCustomTabs) : true,
+      enableRefreshFlags: src.enableRefreshFlags !== undefined ? Boolean(src.enableRefreshFlags) : true,
+      customRawText: typeof src.customRawText === 'string' ? src.customRawText : '',
+      useDedicatedWindow: Boolean(src.useDedicatedWindow),
+      shuffle: Boolean(src.shuffle),
+      excludeDomains: typeof src.excludeDomains === 'string' ? src.excludeDomains : '',
+      badgeCountdown: src.badgeCountdown !== undefined ? Boolean(src.badgeCountdown) : true
+    };
+  };
 
   function createEntryRow(entry = {}) {
     const row = document.createElement('div');
@@ -194,6 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
       row.remove();
       ensureAtLeastOneRow();
       refreshOrder();
+      schedulePersist(parseProfileIndex(profileSelect.value));
     });
 
     controls.append(refreshCheckbox, refreshLabel, refreshDelayWrap, timerCheckbox, timerLabel, timerWrap, removeBtn);
@@ -232,6 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
       entriesContainer.insertBefore(rows[target], row);
     }
     refreshOrder();
+    schedulePersist(parseProfileIndex(profileSelect.value));
   }
 
   function fillEntries(entries) {
@@ -258,6 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
       );
     });
     refreshOrder();
+    schedulePersist(parseProfileIndex(profileSelect.value));
   }
 
   function collectEntries() {
@@ -287,6 +322,9 @@ document.addEventListener('DOMContentLoaded', () => {
       .filter((item) => item.url);
   }
 
+  entriesContainer.addEventListener('input', () => schedulePersist(parseProfileIndex(profileSelect.value)));
+  entriesContainer.addEventListener('change', () => schedulePersist(parseProfileIndex(profileSelect.value)));
+
   function setEntriesDisabled(disabled) {
     entriesContainer.querySelectorAll('input, button').forEach((el) => {
       el.disabled = disabled;
@@ -301,6 +339,23 @@ document.addEventListener('DOMContentLoaded', () => {
     setEntriesDisabled(!enabled);
   }
 
+  const persistableFields = [
+    intervalInput,
+    autoStartCheckbox,
+    useCustomListCheckbox,
+    openCustomTabsCheckbox,
+    useDedicatedWindowCheckbox,
+    orderModeSelect,
+    badgeCountdownCheckbox,
+    excludeDomainsInput,
+    excludeToggle
+  ];
+
+  persistableFields.forEach((el) => {
+    const eventName = el.tagName === 'INPUT' && el.type === 'number' ? 'input' : 'change';
+    el.addEventListener(eventName, () => schedulePersist(parseProfileIndex(profileSelect.value)));
+  });
+
   function toggleExcludeControls() {
     const enabled = excludeToggle.checked;
     excludeDomainsInput.disabled = !enabled;
@@ -312,6 +367,7 @@ document.addEventListener('DOMContentLoaded', () => {
   addEntryBtn.addEventListener('click', () => {
     entriesContainer.appendChild(createEntryRow());
     refreshOrder();
+    schedulePersist(parseProfileIndex(profileSelect.value));
   });
 
   excludeToggle.addEventListener('change', toggleExcludeControls);
@@ -369,36 +425,32 @@ document.addEventListener('DOMContentLoaded', () => {
       'shuffle',
       'excludeDomains',
       'badgeCountdown',
-      'profiles'
+      'profiles',
+      'selectedProfileIndex',
+      'defaultConfig'
     ],
     (data) => {
-      if (data.intervalSec) {
-        intervalInput.value = data.intervalSec;
-      }
-
-      autoStartCheckbox.checked = Boolean(data.autoStart);
-      useCustomListCheckbox.checked = Boolean(data.useCustomList);
-      openCustomTabsCheckbox.checked =
-        data.openCustomTabs !== undefined ? Boolean(data.openCustomTabs) : true;
-      useDedicatedWindowCheckbox.checked = Boolean(data.useDedicatedWindow);
-      orderModeSelect.value = data.shuffle ? 'shuffle' : 'sequential';
-      badgeCountdownCheckbox.checked =
-        data.badgeCountdown !== undefined ? Boolean(data.badgeCountdown) : true;
-
-      const excludeValue = data.excludeDomains || '';
-      excludeDomainsInput.value = excludeValue;
-      excludeToggle.checked = excludeValue.length > 0;
-      toggleExcludeControls();
-
       profiles = Array.isArray(data.profiles) ? data.profiles : [];
       renderProfiles();
 
-      const entries = Array.isArray(data.customEntries) && data.customEntries.length
-        ? data.customEntries
-        : data.customUrls || [];
+      const storedProfileIndex = Number.isInteger(data.selectedProfileIndex)
+        ? data.selectedProfileIndex
+        : NO_PROFILE_SELECTED;
 
-      fillEntries(entries);
-      toggleCustomControls();
+      const baseConfig = data.defaultConfig
+        ? configFromData(data.defaultConfig)
+        : configFromData(data);
+      defaultConfigCache = baseConfig;
+
+      if (storedProfileIndex >= 0 && storedProfileIndex < profiles.length) {
+        profileSelect.value = String(storedProfileIndex);
+        lastSelectedProfileIndex = storedProfileIndex;
+        applyConfig(profiles[storedProfileIndex].config, true);
+      } else {
+        profileSelect.value = '';
+        lastSelectedProfileIndex = NO_PROFILE_SELECTED;
+        applyConfig(baseConfig, true);
+      }
 
       if (data.isRunning) {
         setStatus(t('status_rotation_running'), 'ok');
@@ -406,6 +458,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setStatus(t('status_rotation_stopped'), 'error');
       }
       setRunningUi(Boolean(data.isRunning));
+      isInitializing = false;
     }
   );
 
@@ -428,15 +481,57 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  function schedulePersist(selectedIdx = parseProfileIndex(profileSelect.value)) {
+    if (isInitializing) {
+      return;
+    }
+    if (autoPersistTimer) {
+      clearTimeout(autoPersistTimer);
+    }
+    autoPersistTimer = setTimeout(() => {
+      if (selectedIdx === NO_PROFILE_SELECTED) {
+        persistCurrentFormState(NO_PROFILE_SELECTED).catch(() => {});
+      } else if (selectedIdx >= 0 && selectedIdx < profiles.length) {
+        storageArea.set({ selectedProfileIndex: selectedIdx }).catch(() => {});
+        lastSelectedProfileIndex = selectedIdx;
+      }
+    }, 150);
+  }
+
+  async function persistCurrentFormState(selectedIdx = parseProfileIndex(profileSelect.value)) {
+    const config = getCurrentConfig();
+    const safeIndex =
+      Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < profiles.length
+        ? selectedIdx
+        : NO_PROFILE_SELECTED;
+    lastSelectedProfileIndex = safeIndex;
+
+    if (safeIndex === NO_PROFILE_SELECTED) {
+      defaultConfigCache = { ...config };
+      await storageArea.set({
+        ...config,
+        customEntries: config.customEntries,
+        activeConfig: null,
+        selectedProfileIndex: null,
+        isRunning: uiRunning,
+        defaultConfig: { ...config }
+      });
+    } else {
+      await storageArea.set({ selectedProfileIndex: safeIndex });
+    }
+  }
+
   // Save: update selected profile without asking for name
   saveProfileBtn.addEventListener('click', async () => {
-    const idx = Number(profileSelect.value);
-    if (!Number.isInteger(idx) || idx < 0 || idx >= profiles.length) {
+    const rawValue = profileSelect.value;
+    const idx = parseProfileIndex(rawValue);
+    if (rawValue === '' || idx < 0 || idx >= profiles.length) {
       setStatus(t('status_profile_select_first'), 'error');
       return;
     }
     profiles[idx].config = getCurrentConfig();
-    await storageArea.set({ profiles });
+    await storageArea.set({ profiles, selectedProfileIndex: idx });
+    lastSelectedProfileIndex = idx;
     const displayName = profiles[idx].name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`;
     setStatus(t('status_profile_updated', [displayName]), 'ok');
     flashButton(saveProfileBtn);
@@ -462,24 +557,34 @@ document.addEventListener('DOMContentLoaded', () => {
       profiles.push({ name: trimmed, config });
     }
     renderProfiles();
-    profileSelect.value = String(existingIdx >= 0 ? existingIdx : profiles.length - 1);
-    await storageArea.set({ profiles });
+    const selectedIdx = existingIdx >= 0 ? existingIdx : profiles.length - 1;
+    profileSelect.value = String(selectedIdx);
+    lastSelectedProfileIndex = selectedIdx;
+    await storageArea.set({ profiles, selectedProfileIndex: selectedIdx });
     setStatus(t('status_profile_saved', [trimmed]), 'ok');
     flashButton(saveAsProfileBtn);
   });
 
   deleteProfileBtn.addEventListener('click', async () => {
-    const idx = Number(profileSelect.value);
-    if (!Number.isInteger(idx) || idx < 0 || idx >= profiles.length) return;
+    const rawValue = profileSelect.value;
+    const idx = parseProfileIndex(rawValue);
+    if (rawValue === '' || idx < 0 || idx >= profiles.length) return;
     profiles.splice(idx, 1);
     renderProfiles();
-    await storageArea.set({ profiles });
+    profileSelect.value = '';
+    lastSelectedProfileIndex = NO_PROFILE_SELECTED;
+    await storageArea.set({ profiles, selectedProfileIndex: null });
+    if (defaultConfigCache) {
+      applyConfig(defaultConfigCache, true);
+    }
+    await persistCurrentFormState(NO_PROFILE_SELECTED);
     setStatus(t('status_profile_deleted'), 'ok');
   });
 
   editProfileBtn.addEventListener('click', async () => {
-    const idx = Number(profileSelect.value);
-    if (!Number.isInteger(idx) || idx < 0 || idx >= profiles.length) {
+    const rawValue = profileSelect.value;
+    const idx = parseProfileIndex(rawValue);
+    if (rawValue === '' || idx < 0 || idx >= profiles.length) {
       setStatus(t('status_profile_choose'), 'error');
       return;
     }
@@ -501,21 +606,33 @@ document.addEventListener('DOMContentLoaded', () => {
     profiles[idx] = { ...current, name: trimmed, config: cfg };
     renderProfiles();
     profileSelect.value = String(idx);
-    await storageArea.set({ profiles });
+    lastSelectedProfileIndex = idx;
+    await storageArea.set({ profiles, selectedProfileIndex: idx });
     setStatus(t('status_profile_renamed', [trimmed]), 'ok');
     flashButton(editProfileBtn);
   });
 
-  profileSelect.addEventListener('change', () => {
-    const idx = Number(profileSelect.value);
-    if (!Number.isInteger(idx) || idx < 0 || idx >= profiles.length) return;
+  profileSelect.addEventListener('change', async () => {
+    const rawValue = profileSelect.value;
+    const idx = parseProfileIndex(rawValue);
+    if (rawValue === '' || idx < 0 || idx >= profiles.length) {
+      profileSelect.value = '';
+      lastSelectedProfileIndex = NO_PROFILE_SELECTED;
+      if (defaultConfigCache) {
+        applyConfig(defaultConfigCache, true);
+      }
+      await persistCurrentFormState(NO_PROFILE_SELECTED);
+      return;
+    }
     applyConfig(profiles[idx].config, true);
+    lastSelectedProfileIndex = idx;
+    await storageArea.set({ selectedProfileIndex: idx });
   });
 
-  applyProfileBtn.addEventListener('click', () => {
+  applyProfileBtn.addEventListener('click', async () => {
     const selectedValue = profileSelect.value;
-    const idx = Number(selectedValue);
-    if (selectedValue === '' || !Number.isInteger(idx) || idx < 0 || idx >= profiles.length) {
+    const idx = parseProfileIndex(selectedValue);
+    if (selectedValue === '' || idx < 0 || idx >= profiles.length) {
       // if no profile selected, keep current form values
       flashButton(applyProfileBtn);
       setStatus(t('status_profile_default'), 'error');
@@ -524,6 +641,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const profileName = profiles[idx].name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`;
     const cfg = profiles[idx].config;
     applyConfig(cfg);
+    lastSelectedProfileIndex = idx;
+    await storageArea.set({ selectedProfileIndex: idx });
     flashButton(applyProfileBtn);
     setStatus(
       t(
@@ -535,16 +654,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   exportProfileBtn.addEventListener('click', () => {
-    const idx = Number(profileSelect.value);
+    const rawValue = profileSelect.value;
+    const idx = parseProfileIndex(rawValue);
     let payload;
     let name = 'current';
-    if (Number.isInteger(idx) && idx >= 0 && idx < profiles.length) {
+    if (rawValue !== '' && idx >= 0 && idx < profiles.length) {
       payload = {
         profiles: [profiles[idx]]
       };
       name = profiles[idx].name || `profile-${idx + 1}`;
     } else {
-      payload = { current: getCurrentConfig() };
+      setStatus(t('status_profile_select_first'), 'error');
+      return;
     }
 
     const data = JSON.stringify(payload, null, 2);
@@ -601,13 +722,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (appliedConfig) {
         applyConfig(appliedConfig);
-        await storageArea.set({ ...appliedConfig, customEntries: appliedConfig.customEntries, isRunning: false });
+        lastSelectedProfileIndex = profiles.length ? selectedIndex : NO_PROFILE_SELECTED;
+        if (selectedIndex >= 0) {
+          await storageArea.set({
+            activeConfig: { ...appliedConfig },
+            isRunning: false,
+            selectedProfileIndex: selectedIndex
+          });
+        } else {
+          defaultConfigCache = appliedConfig;
+          await storageArea.set({
+            ...appliedConfig,
+            customEntries: appliedConfig.customEntries,
+            isRunning: false,
+            defaultConfig: appliedConfig,
+            selectedProfileIndex: null
+          });
+        }
       }
 
-      await storageArea.set({ profiles });
+      await storageArea.set({
+        profiles,
+        selectedProfileIndex: profiles.length ? selectedIndex : null
+      });
+      lastSelectedProfileIndex = profiles.length ? selectedIndex : NO_PROFILE_SELECTED;
       renderProfiles();
       if (profiles.length) {
         profileSelect.value = String(selectedIndex);
+        if (appliedConfig) {
+          await persistCurrentFormState(selectedIndex);
+        }
+      } else {
+        profileSelect.value = '';
       }
       setStatus(t('status_import_ok'), 'ok');
     } catch (err) {
@@ -618,6 +764,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   startBtn.addEventListener('click', () => {
     const cfg = getCurrentConfig();
+    const selectedIdx = parseProfileIndex(profileSelect.value);
+    lastSelectedProfileIndex =
+      selectedIdx >= 0 && selectedIdx < profiles.length ? selectedIdx : NO_PROFILE_SELECTED;
     startBtn.disabled = true;
     stopBtn.disabled = true;
 
@@ -635,7 +784,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const payload = { ...cfg };
 
-    storageArea.set({ ...payload, isRunning: true }).catch(() => {});
+    if (lastSelectedProfileIndex === NO_PROFILE_SELECTED) {
+      defaultConfigCache = payload;
+      storageArea
+        .set({
+          ...payload,
+          activeConfig: null,
+          isRunning: true,
+          selectedProfileIndex: null,
+          defaultConfig: payload
+        })
+        .catch(() => {});
+    } else {
+      storageArea
+        .set({
+          activeConfig: payload,
+          isRunning: true,
+          selectedProfileIndex: lastSelectedProfileIndex
+        })
+        .catch(() => {});
+    }
 
     chrome.runtime.sendMessage(
       { type: 'START', ...payload },

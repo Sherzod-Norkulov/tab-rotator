@@ -60,6 +60,20 @@ async function ensureDedicatedWindow(entries) {
   return { id: ensuredWindowId, created: true };
 }
 
+async function closeDedicatedWindow() {
+  if (!ensuredWindowId) {
+    return;
+  }
+
+  try {
+    await chrome.windows.remove(ensuredWindowId);
+  } catch (e) {
+    // window may already be closed; ignore
+  } finally {
+    ensuredWindowId = null;
+  }
+}
+
 const defaultSettings = {
   intervalSec: 5,
   autoStart: false,
@@ -81,11 +95,14 @@ function normalizeEntries(entries) {
     return [];
   }
 
-  return entries
-    .map((entry) => {
-      if (typeof entry === 'string') {
-        return { url: entry.trim(), name: '', refresh: false, intervalSec: null, refreshDelaySec: 0 };
-      }
+  const seen = new Set();
+  const result = [];
+
+  for (const entry of entries) {
+    let normalizedEntry;
+    if (typeof entry === 'string') {
+      normalizedEntry = { url: entry.trim(), name: '', refresh: false, intervalSec: null, refreshDelaySec: 0 };
+    } else {
       const url = typeof entry?.url === 'string' ? entry.url.trim() : '';
       const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
       const refresh = Boolean(entry?.refresh);
@@ -93,21 +110,40 @@ function normalizeEntries(entries) {
       const intervalSec = Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : null;
       const refreshDelayRaw = Number(entry?.refreshDelaySec);
       const refreshDelaySec = Number.isFinite(refreshDelayRaw) && refreshDelayRaw >= 0 ? refreshDelayRaw : 0;
-      return { url, name, refresh, intervalSec, refreshDelaySec };
-    })
-    .filter((entry) => entry.url.length > 0);
+      normalizedEntry = { url, name, refresh, intervalSec, refreshDelaySec };
+    }
+
+    if (!normalizedEntry.url.length) continue;
+    const key = normalizedMatchUrl(normalizedEntry.url).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalizedEntry);
+  }
+
+  return result;
 }
+
+const preservedSchemes = ['http:', 'https:', 'chrome:', 'edge:', 'about:', 'file:', 'data:', 'chrome-extension:', 'moz-extension:', 'opera:'];
 
 function normalizedMatchUrl(candidate) {
   if (!candidate) {
     return '';
   }
 
-  let url = candidate.trim();
-  if (!/^https?:\/\//i.test(url)) {
-    url = `https://${url}`;
+  const url = candidate.trim();
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url);
+  if (hasScheme) {
+    try {
+      const parsed = new URL(url);
+      if (preservedSchemes.includes(parsed.protocol)) {
+        return url;
+      }
+    } catch (e) {
+      return url;
+    }
   }
-  return url;
+
+  return `https://${url}`;
 }
 
 function tabMatches(tabUrl, targetUrl) {
@@ -459,7 +495,7 @@ async function startRotator(options = {}) {
     const { id } = await ensureDedicatedWindow(currentSettings.customEntries);
     ensuredWindowId = id;
   } else {
-    ensuredWindowId = null;
+    await closeDedicatedWindow();
   }
 
   rotationTargets = normalized.useCustomList
@@ -537,35 +573,40 @@ async function restoreFromStorage() {
       'configBackup',
       'shuffle',
       'excludeDomains',
-      'badgeCountdown'
+      'badgeCountdown',
+      'activeConfig'
     ]);
 
-    let entriesFromStorage = Array.isArray(data.customEntries) && data.customEntries.length
-      ? data.customEntries
-      : data.customUrls || [];
+    const source = data.activeConfig && typeof data.activeConfig === 'object'
+      ? data.activeConfig
+      : data;
 
-    if ((!entriesFromStorage || !entriesFromStorage.length) && data.configBackup?.settings?.customEntries) {
-      entriesFromStorage = data.configBackup.settings.customEntries;
+    let entriesFromStorage = Array.isArray(source.customEntries) && source.customEntries.length
+      ? source.customEntries
+      : source.customUrls || [];
+
+    if ((!entriesFromStorage || !entriesFromStorage.length) && source.configBackup?.settings?.customEntries) {
+      entriesFromStorage = source.configBackup.settings.customEntries;
     }
 
     currentSettings = {
       ...defaultSettings,
-      ...data,
+      ...source,
       customEntries: entriesFromStorage,
-      customRawText: typeof data.customRawText === 'string'
-        ? data.customRawText
+      customRawText: typeof source.customRawText === 'string'
+        ? source.customRawText
         : Array.isArray(entriesFromStorage)
           ? entriesFromStorage.map((item) => (typeof item === 'string' ? item : item.url || '')).join('\n')
           : '',
-      useDedicatedWindow: Boolean(data.useDedicatedWindow),
-      shuffle: Boolean(data.shuffle),
-      excludeDomains: typeof data.excludeDomains === 'string' ? data.excludeDomains : '',
-      badgeCountdown: data.badgeCountdown !== undefined ? Boolean(data.badgeCountdown) : true
+      useDedicatedWindow: Boolean(source.useDedicatedWindow),
+      shuffle: Boolean(source.shuffle),
+      excludeDomains: typeof source.excludeDomains === 'string' ? source.excludeDomains : '',
+      badgeCountdown: source.badgeCountdown !== undefined ? Boolean(source.badgeCountdown) : true
     };
 
-    ensuredWindowId = data.ensuredWindowId || data.targetWindowId || null;
+    ensuredWindowId = source.ensuredWindowId || source.targetWindowId || null;
 
-    if (data.isRunning || data.autoStart) {
+    if (data.isRunning || source.autoStart) {
       await startRotator(currentSettings);
     } else {
       chrome.action.setIcon({ path: iconOff }).catch(() => {});
