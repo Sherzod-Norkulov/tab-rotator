@@ -1,13 +1,18 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const isStandalone = new URLSearchParams(window.location.search).get('standalone') === '1';
+  // Keep service worker alive while popup is open
+  const popupPort = chrome.runtime.connect({ name: isStandalone ? 'panel' : 'popup' });
   const intervalInput = document.getElementById('interval');
   const startBtn = document.getElementById('start');
   const stopBtn = document.getElementById('stop');
   const statusEl = document.getElementById('status');
+  const openInWindowBtn = document.getElementById('openInWindow');
   const autoStartCheckbox = document.getElementById('autoStart');
   const useCustomListCheckbox = document.getElementById('useCustomList');
   const openCustomTabsCheckbox = document.getElementById('openCustomTabs');
   const useDedicatedWindowCheckbox = document.getElementById('useDedicatedWindow');
   const badgeCountdownCheckbox = document.getElementById('badgeCountdown');
+  const allowRotationWhilePopupOpenCheckbox = document.getElementById('allowRotationWhilePopupOpen');
   const orderModeSelect = document.getElementById('orderMode');
   const excludeDomainsInput = document.getElementById('excludeDomains');
   const excludeToggle = document.getElementById('excludeToggle');
@@ -19,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const deleteProfileBtn = document.getElementById('deleteProfile');
   const exportProfileBtn = document.getElementById('exportProfile');
   const importProfileInput = document.getElementById('importProfile');
+  const footerVersionEl = document.getElementById('footerVersion');
   const entriesContainer = document.getElementById('entries');
   const addEntryBtn = document.getElementById('addEntry');
   const storageArea = chrome.storage.local;
@@ -86,6 +92,28 @@ document.addEventListener('DOMContentLoaded', () => {
   // initial visual state
   setRunningUi(false);
   applyI18n();
+  if (footerVersionEl && chrome.runtime?.getManifest) {
+    const version = chrome.runtime.getManifest().version;
+    if (version) {
+      footerVersionEl.textContent = t('footer_version', [version]);
+    }
+  }
+  if (openInWindowBtn) {
+    if (isStandalone) {
+      openInWindowBtn.style.display = 'none';
+    } else {
+      openInWindowBtn.addEventListener('click', () => {
+        chrome.windows
+          .create({
+            url: chrome.runtime.getURL('popup.html?standalone=1'),
+            type: 'popup',
+            width: 420,
+            height: 720
+          })
+          .catch(() => {});
+      });
+    }
+  }
 
   const parseProfileIndex = (value) => {
     if (value === '' || value === null || value === undefined) {
@@ -110,8 +138,14 @@ document.addEventListener('DOMContentLoaded', () => {
       useDedicatedWindow: Boolean(src.useDedicatedWindow),
       shuffle: Boolean(src.shuffle),
       excludeDomains: typeof src.excludeDomains === 'string' ? src.excludeDomains : '',
-      badgeCountdown: src.badgeCountdown !== undefined ? Boolean(src.badgeCountdown) : true
+      badgeCountdown: src.badgeCountdown !== undefined ? Boolean(src.badgeCountdown) : true,
+      allowRotationWhilePopupOpen: Boolean(src.allowRotationWhilePopupOpen)
     };
+  };
+
+  const ICONS = {
+    chevronUp: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9l-5 5M12 9l5 5"/></svg>',
+    chevronDown: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15l-5 -5M12 15l5 -5"/></svg>'
   };
 
   function createEntryRow(entry = {}) {
@@ -123,11 +157,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const orderLabel = document.createElement('span');
     orderLabel.className = 'order-label';
     const upBtn = document.createElement('button');
-    upBtn.className = 'secondary small';
-    upBtn.textContent = '▲';
+    upBtn.type = 'button';
+    upBtn.className = 'secondary small order-btn';
+    upBtn.innerHTML = ICONS.chevronUp;
     const downBtn = document.createElement('button');
-    downBtn.className = 'secondary small';
-    downBtn.textContent = '▼';
+    downBtn.type = 'button';
+    downBtn.className = 'secondary small order-btn';
+    downBtn.innerHTML = ICONS.chevronDown;
     const btnWrap = document.createElement('div');
     btnWrap.className = 'order-buttons';
     btnWrap.append(upBtn, downBtn);
@@ -347,6 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
     useDedicatedWindowCheckbox,
     orderModeSelect,
     badgeCountdownCheckbox,
+    allowRotationWhilePopupOpenCheckbox,
     excludeDomainsInput,
     excludeToggle
   ];
@@ -401,6 +438,9 @@ document.addEventListener('DOMContentLoaded', () => {
     useDedicatedWindowCheckbox.checked = !!cfg.useDedicatedWindow;
     orderModeSelect.value = cfg.shuffle ? 'shuffle' : 'sequential';
     badgeCountdownCheckbox.checked = cfg.badgeCountdown !== undefined ? !!cfg.badgeCountdown : true;
+    if (allowRotationWhilePopupOpenCheckbox) {
+      allowRotationWhilePopupOpenCheckbox.checked = !!cfg.allowRotationWhilePopupOpen;
+    }
     excludeDomainsInput.value = cfg.excludeDomains || '';
     excludeToggle.checked = (cfg.excludeDomains || '').length > 0;
     toggleExcludeControls();
@@ -424,6 +464,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'useDedicatedWindow',
       'shuffle',
       'excludeDomains',
+      'allowRotationWhilePopupOpen',
       'badgeCountdown',
       'profiles',
       'selectedProfileIndex',
@@ -477,7 +518,8 @@ document.addEventListener('DOMContentLoaded', () => {
       useDedicatedWindow: useDedicatedWindowCheckbox.checked,
       shuffle: orderModeSelect.value === 'shuffle',
       excludeDomains: excludeEnabled ? excludeDomainsInput.value : '',
-      badgeCountdown: badgeCountdownCheckbox.checked
+      badgeCountdown: badgeCountdownCheckbox.checked,
+      allowRotationWhilePopupOpen: allowRotationWhilePopupOpenCheckbox?.checked || false
     };
   }
 
@@ -821,7 +863,10 @@ document.addEventListener('DOMContentLoaded', () => {
           const listInfo = cfg.useCustomList
             ? t('list_info_custom', [cfg.customEntries.length])
             : t('list_info_all_tabs');
-          setStatus(t('status_rotation_started', [listInfo]), 'ok');
+          const statusKey = response.deferred
+            ? 'status_rotation_started_deferred'
+            : 'status_rotation_started';
+          setStatus(t(statusKey, [listInfo]), 'ok');
           setRunningUi(true);
         } else if (response && response.error === 'INVALID_INTERVAL') {
           setStatus(t('status_interval_invalid'), 'error');

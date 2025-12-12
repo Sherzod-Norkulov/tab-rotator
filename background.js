@@ -3,6 +3,12 @@ let intervalMs = 5000;
 let isRunning = false;
 let rotationTargets = [];
 let restoring = false;
+let explicitCommandInProgress = false;
+let suppressAutoStartOnce = false;
+let popupOpen = false;
+let pendingStartOptions = null;
+let wasRunningBeforePopup = false;
+let pausedSettingsSnapshot = null;
 let ensuredWindowId = null;
 let badgeTimer = null;
 const iconOn = {
@@ -19,7 +25,7 @@ const storageArea = chrome.storage.local;
 const manifestVersion = (typeof chrome !== 'undefined' &&
   chrome.runtime &&
   typeof chrome.runtime.getManifest === 'function' &&
-  chrome.runtime.getManifest().version) || '1.0.0';
+  chrome.runtime.getManifest().version) || '1.1.0';
 let lastCandidates = [];
 
 async function ensureDedicatedWindow(entries) {
@@ -85,7 +91,8 @@ const defaultSettings = {
   useDedicatedWindow: false,
   shuffle: false,
   excludeDomains: '',
-  badgeCountdown: true
+  badgeCountdown: true,
+  allowRotationWhilePopupOpen: false
 };
 
 let currentSettings = { ...defaultSettings };
@@ -114,7 +121,7 @@ function normalizeEntries(entries) {
     }
 
     if (!normalizedEntry.url.length) continue;
-    const key = normalizedMatchUrl(normalizedEntry.url).toLowerCase();
+    const key = normalizedMatchUrl(normalizedEntry.url);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(normalizedEntry);
@@ -123,27 +130,27 @@ function normalizeEntries(entries) {
   return result;
 }
 
-const preservedSchemes = ['http:', 'https:', 'chrome:', 'edge:', 'about:', 'file:', 'data:', 'chrome-extension:', 'moz-extension:', 'opera:'];
-
 function normalizedMatchUrl(candidate) {
   if (!candidate) {
     return '';
   }
 
   const url = candidate.trim();
-  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url);
-  if (hasScheme) {
-    try {
-      const parsed = new URL(url);
-      if (preservedSchemes.includes(parsed.protocol)) {
-        return url;
-      }
-    } catch (e) {
-      return url;
-    }
+  if (!url) {
+    return '';
   }
 
-  return `https://${url}`;
+  try {
+    return new URL(url).href;
+  } catch (e) {
+    // fall through
+  }
+
+  try {
+    return new URL(`https://${url}`).href;
+  } catch (e) {
+    return `https://${url}`;
+  }
 }
 
 function tabMatches(tabUrl, targetUrl) {
@@ -158,16 +165,33 @@ function tabMatches(tabUrl, targetUrl) {
     const tabParsed = new URL(normalizedTab);
     const targetParsed = new URL(normalizedTarget);
 
-    if (tabParsed.hostname === targetParsed.hostname) {
-      return true;
+    const tabHost = (tabParsed.hostname || '').toLowerCase();
+    const targetHost = (targetParsed.hostname || '').toLowerCase();
+
+    const hostsMatch =
+      tabHost === targetHost ||
+      (tabHost && targetHost && tabHost.endsWith(`.${targetHost}`)) ||
+      (tabHost && targetHost && targetHost.endsWith(`.${tabHost}`));
+
+    if (!hostsMatch) {
+      return normalizedTab.startsWith(normalizedTarget);
     }
 
-    // host contains match for cases like google.com vs www.google.com
-    if (tabParsed.hostname.endsWith(`.${targetParsed.hostname}`)) {
-      return true;
+    const normalizePath = (pathname) => {
+      if (!pathname) return '';
+      return pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+    };
+
+    const targetPath = normalizePath(targetParsed.pathname);
+    if (targetPath && targetPath !== '/') {
+      const tabPath = normalizePath(tabParsed.pathname);
+      if (tabPath === targetPath || tabPath.startsWith(`${targetPath}/`)) {
+        return true;
+      }
+      return normalizedTab.startsWith(normalizedTarget);
     }
 
-    return normalizedTab.startsWith(normalizedTarget);
+    return true;
   } catch (error) {
     return normalizedTab.startsWith(normalizedTarget) || normalizedTab.includes(targetUrl);
   }
@@ -210,12 +234,15 @@ async function prepareCustomTargets(entries, openMissing) {
     const { url, refresh } = entry;
     const normalizedUrl = normalizedMatchUrl(url);
 
-    let tab = existingTabs.find(
-      (t) =>
-        typeof t.url === 'string' &&
-        tabMatches(t.url, normalizedUrl) &&
+    let tab = existingTabs.find((t) => {
+      const candidateUrls = [];
+      if (typeof t.pendingUrl === 'string') candidateUrls.push(t.pendingUrl);
+      if (typeof t.url === 'string') candidateUrls.push(t.url);
+      return (
+        candidateUrls.some((u) => tabMatches(u, normalizedUrl)) &&
         !usedIds.has(t.id)
-    );
+      );
+    });
 
     if (!tab && openMissing) {
       const createOptions = { url: normalizedUrl, active: false };
@@ -274,12 +301,14 @@ function buildCandidatesFromCustomEntries(tabs) {
 
   for (const entry of currentSettings.customEntries) {
     const targetUrl = normalizedMatchUrl(entry.url);
-    const found = tabs.find(
-      (t) =>
-        typeof t.url === 'string' &&
-        !isExcluded(t.url, excluded) &&
-        tabMatches(t.url, targetUrl)
-    );
+    const found = tabs.find((t) => {
+      const candidateUrls = [];
+      if (typeof t.pendingUrl === 'string') candidateUrls.push(t.pendingUrl);
+      if (typeof t.url === 'string') candidateUrls.push(t.url);
+      return candidateUrls.some(
+        (u) => u && !isExcluded(u, excluded) && tabMatches(u, targetUrl)
+      );
+    });
 
     if (found && !usedIds.has(found.id)) {
       usedIds.add(found.id);
@@ -297,7 +326,14 @@ function buildCandidatesFromCustomEntries(tabs) {
 
     for (const rt of rotationTargets) {
       const tab = tabMap.get(rt.tabId);
-      if (tab && !usedIds.has(tab.id) && !isExcluded(tab.url, excluded)) {
+      if (
+        tab &&
+        !usedIds.has(tab.id) &&
+        !isExcluded(
+          typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url,
+          excluded
+        )
+      ) {
         usedIds.add(tab.id);
         candidates.push({
           tab,
@@ -317,7 +353,12 @@ function findEntryForTab(tab) {
   if (!tab || !currentSettings.customEntries.length) {
     return null;
   }
-  const tabUrl = typeof tab.url === 'string' ? tab.url : '';
+  const tabUrl =
+    typeof tab.pendingUrl === 'string'
+      ? tab.pendingUrl
+      : typeof tab.url === 'string'
+        ? tab.url
+        : '';
   for (const entry of currentSettings.customEntries) {
     const targetUrl = normalizedMatchUrl(entry.url);
     if (tabMatches(tabUrl, targetUrl)) {
@@ -358,9 +399,12 @@ async function rotateTabs() {
 
     let candidates = buildCandidatesFromCustomEntries(tabs);
 
-    if (currentSettings.useCustomList && candidates.length < 2) {
-      // Попробуем пересоздать список и недостающие вкладки
-      rotationTargets = await prepareCustomTargets(currentSettings.customEntries, true);
+      if (currentSettings.useCustomList && candidates.length < 2) {
+        // Попробуем пересоздать список и недостающие вкладки (только если это разрешено настройками)
+        rotationTargets = await prepareCustomTargets(
+          currentSettings.customEntries,
+          Boolean(currentSettings.openCustomTabs)
+        );
       if (rotationTargets.length) {
         tabs = await chrome.tabs.query(
           currentSettings.useDedicatedWindow && ensuredWindowId
@@ -375,7 +419,7 @@ async function rotateTabs() {
 
     if (candidates.length < 2) {
       candidates = tabs
-        .filter((t) => !isExcluded(t.url, excluded))
+        .filter((t) => !isExcluded(typeof t.pendingUrl === 'string' ? t.pendingUrl : t.url, excluded))
         .map((t) => ({ tab: t, refresh: false, intervalSec: null }));
       if (candidates.length < 2) {
         return;
@@ -479,6 +523,11 @@ async function startRotator(options = {}) {
   normalized.customRawText = typeof normalized.customRawText === 'string'
     ? normalized.customRawText
     : currentSettings.customRawText || '';
+  normalized.allowRotationWhilePopupOpen = Boolean(
+    normalized.allowRotationWhilePopupOpen === undefined
+      ? currentSettings.allowRotationWhilePopupOpen
+      : normalized.allowRotationWhilePopupOpen
+  );
 
   if (!normalized.useCustomList) {
     normalized.openCustomTabs = false;
@@ -550,7 +599,7 @@ function scheduleNextTick(delayMs) {
 }
 
 async function restoreFromStorage() {
-  if (restoring || isRunning) {
+  if (restoring || isRunning || explicitCommandInProgress) {
     return;
   }
 
@@ -574,6 +623,7 @@ async function restoreFromStorage() {
       'shuffle',
       'excludeDomains',
       'badgeCountdown',
+      'allowRotationWhilePopupOpen',
       'activeConfig'
     ]);
 
@@ -601,12 +651,19 @@ async function restoreFromStorage() {
       useDedicatedWindow: Boolean(source.useDedicatedWindow),
       shuffle: Boolean(source.shuffle),
       excludeDomains: typeof source.excludeDomains === 'string' ? source.excludeDomains : '',
-      badgeCountdown: source.badgeCountdown !== undefined ? Boolean(source.badgeCountdown) : true
+      badgeCountdown: source.badgeCountdown !== undefined ? Boolean(source.badgeCountdown) : true,
+      allowRotationWhilePopupOpen: source.allowRotationWhilePopupOpen !== undefined
+        ? Boolean(source.allowRotationWhilePopupOpen)
+        : false
     };
 
     ensuredWindowId = source.ensuredWindowId || source.targetWindowId || null;
 
-    if (data.isRunning || source.autoStart) {
+    if (
+      (!popupOpen || currentSettings.allowRotationWhilePopupOpen) &&
+      !suppressAutoStartOnce &&
+      (data.isRunning || source.autoStart)
+    ) {
       await startRotator(currentSettings);
     } else {
       chrome.action.setIcon({ path: iconOff }).catch(() => {});
@@ -615,53 +672,82 @@ async function restoreFromStorage() {
     console.error('Не удалось восстановить состояние из storage:', error);
   } finally {
     restoring = false;
+    suppressAutoStartOnce = false;
   }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message.type === 'START') {
-      const {
-        intervalSec,
-        useCustomList,
-        customEntries,
-        customUrls,
-        openCustomTabs,
-        autoStart,
-        enableRefreshFlags,
-        useDedicatedWindow,
-        shuffle,
-        excludeDomains,
-        badgeCountdown
-      } = message;
+      explicitCommandInProgress = true;
+      suppressAutoStartOnce = true;
+      try {
+        const {
+          intervalSec,
+          useCustomList,
+          customEntries,
+          customUrls,
+          openCustomTabs,
+          autoStart,
+          enableRefreshFlags,
+          useDedicatedWindow,
+          shuffle,
+          excludeDomains,
+          badgeCountdown,
+          allowRotationWhilePopupOpen
+        } = message;
 
-      if (!Number.isFinite(Number(intervalSec)) || Number(intervalSec) < 1) {
-        sendResponse({ ok: false, error: 'INVALID_INTERVAL' });
-        return;
+        if (!Number.isFinite(Number(intervalSec)) || Number(intervalSec) < 1) {
+          sendResponse({ ok: false, error: 'INVALID_INTERVAL' });
+          return;
+        }
+
+        const normalizedEntries = Array.isArray(customEntries) && customEntries.length
+          ? customEntries
+          : customUrls || [];
+
+        const startOptions = {
+          intervalSec,
+          useCustomList,
+          customEntries: normalizedEntries,
+          openCustomTabs,
+          autoStart,
+          enableRefreshFlags,
+          customRawText: message.customRawText || '',
+          useDedicatedWindow,
+          shuffle,
+          excludeDomains,
+          badgeCountdown,
+          allowRotationWhilePopupOpen
+        };
+
+        // explicit start overrides any paused snapshot
+        wasRunningBeforePopup = false;
+        pausedSettingsSnapshot = null;
+
+        if (popupOpen && !startOptions.allowRotationWhilePopupOpen) {
+          pendingStartOptions = startOptions;
+          sendResponse({ ok: true, deferred: true });
+          return;
+        }
+
+        await startRotator(startOptions);
+        sendResponse({ ok: true });
+      } finally {
+        explicitCommandInProgress = false;
       }
-
-    const normalizedEntries = Array.isArray(customEntries) && customEntries.length
-      ? customEntries
-      : customUrls || [];
-
-      await startRotator({
-        intervalSec,
-        useCustomList,
-        customEntries: normalizedEntries,
-        openCustomTabs,
-        autoStart,
-        enableRefreshFlags,
-        customRawText: message.customRawText || '',
-        useDedicatedWindow,
-        shuffle,
-        excludeDomains,
-        badgeCountdown
-      });
-
-      sendResponse({ ok: true });
     } else if (message.type === 'STOP') {
-      await stopRotator();
-      sendResponse({ ok: true });
+      explicitCommandInProgress = true;
+      suppressAutoStartOnce = true;
+      try {
+        pendingStartOptions = null;
+        wasRunningBeforePopup = false;
+        pausedSettingsSnapshot = null;
+        await stopRotator();
+        sendResponse({ ok: true });
+      } finally {
+        explicitCommandInProgress = false;
+      }
     } else {
       sendResponse({ ok: false, error: 'UNKNOWN_COMMAND' });
     }
@@ -677,4 +763,47 @@ chrome.runtime.onStartup.addListener(() => {
   restoreFromStorage();
 });
 
-restoreFromStorage();
+setTimeout(() => restoreFromStorage(), 0);
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'popup') {
+    return;
+  }
+  popupOpen = true;
+  if (isRunning && !currentSettings.allowRotationWhilePopupOpen) {
+    wasRunningBeforePopup = true;
+    try {
+      pausedSettingsSnapshot = JSON.parse(JSON.stringify(currentSettings));
+    } catch (e) {
+      pausedSettingsSnapshot = { ...currentSettings };
+    }
+    stopRotator(false).catch((err) =>
+      console.error('Failed to pause rotator for popup:', err)
+    );
+  } else {
+    wasRunningBeforePopup = false;
+    pausedSettingsSnapshot = null;
+  }
+
+  port.onDisconnect.addListener(() => {
+    popupOpen = false;
+    const options = pendingStartOptions;
+    pendingStartOptions = null;
+    if (options) {
+      startRotator(options).catch((err) =>
+        console.error('Failed to start deferred rotator:', err)
+      );
+    } else if (wasRunningBeforePopup && pausedSettingsSnapshot) {
+      const resumeOptions = pausedSettingsSnapshot;
+      wasRunningBeforePopup = false;
+      pausedSettingsSnapshot = null;
+      startRotator(resumeOptions).catch((err) =>
+        console.error('Failed to resume rotator after popup:', err)
+      );
+      return;
+    }
+
+    wasRunningBeforePopup = false;
+    pausedSettingsSnapshot = null;
+  });
+});
