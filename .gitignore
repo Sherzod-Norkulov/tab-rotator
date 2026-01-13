@@ -1,0 +1,13 @@
+# Secrets / env
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Build outputs (если появятся)
+dist/
+out/
