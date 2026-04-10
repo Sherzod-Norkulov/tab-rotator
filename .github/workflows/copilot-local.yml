@@ -1,0 +1,45 @@
+name: Copilot Local
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  copilot-local:
+    if: startsWith(github.event.comment.body, '/copilot-local') && github.event.comment.user.login == 'Sherzod-Norkulov'
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - copilot-local
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure Git identity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Execute local Copilot task
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 /root/git/copilot-actions-runner/execute_issue_comment.py \
+            --config /root/git/copilot-actions-runner/config.json \
+            --event-path "$GITHUB_EVENT_PATH" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --default-branch "${{ github.event.repository.default_branch }}"
