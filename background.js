@@ -22,10 +22,14 @@ const iconOff = {
   "128": "assets/icons/icon-off-icon128.png"
 };
 const storageArea = chrome.storage.local;
+// In MV3 service workers, chrome.runtime.getManifest() is available synchronously.
+// Keep a defensive fallback ('0.0.0') only for unexpected early execution; we no
+// longer hard-code a second copy of the release version here — that was a source
+// of drift between manifest.json and background.js during releases.
 const manifestVersion = (typeof chrome !== 'undefined' &&
   chrome.runtime &&
   typeof chrome.runtime.getManifest === 'function' &&
-  chrome.runtime.getManifest().version) || '1.2.0';
+  chrome.runtime.getManifest().version) || '0.0.0';
 let lastCandidates = [];
 
 async function ensureDedicatedWindow(entries) {
@@ -45,7 +49,13 @@ async function ensureDedicatedWindow(entries) {
   }
 
   const normalized = normalizeEntries(entries);
-  const firstUrl = normalized[0]?.url ? normalizedMatchUrl(normalized[0].url) : 'about:blank';
+  // Guard: never create an empty `about:blank` dedicated window when the list is empty.
+  // Without this, enabling "Open list in a dedicated window" with no URLs would spawn a
+  // blank monitoring window the user never asked for.
+  if (!normalized.length || !normalized[0]?.url) {
+    return { id: null, created: false };
+  }
+  const firstUrl = normalizedMatchUrl(normalized[0].url);
 
   const createdWindow = await chrome.windows.create({
     url: firstUrl,
@@ -193,7 +203,11 @@ function tabMatches(tabUrl, targetUrl) {
 
     return true;
   } catch (error) {
-    return normalizedTab.startsWith(normalizedTarget) || normalizedTab.includes(targetUrl);
+    // Both URLs failed to parse — compare normalized strings by prefix only.
+    // Avoid a loose `String.includes(targetUrl)` fallback here: with short/common
+    // target fragments it produced false positives (e.g. target "a.com" matching
+    // "https://other.example.com/a.com-thing").
+    return normalizedTab.startsWith(normalizedTarget);
   }
 }
 
@@ -432,15 +446,28 @@ async function rotateTabs() {
     let nextIndex;
 
     if (currentSettings.shuffle) {
+      // Build a pool excluding the currently active tab. If for any reason the pool ends
+      // up empty (e.g. defensive guard — the earlier `candidates.length < 2` check should
+      // already prevent this, but keep behavior safe against future refactors), fall back
+      // to sequential selection instead of dereferencing `undefined`.
       const pool = candidates.filter((_, idx) => idx !== activeIndex);
-      const next = pool[Math.floor(Math.random() * pool.length)];
-      nextIndex = candidates.indexOf(next);
+      if (pool.length === 0) {
+        const startIndex = activeIndex === -1 ? 0 : activeIndex;
+        nextIndex = (startIndex + 1) % candidates.length;
+      } else {
+        const picked = pool[Math.floor(Math.random() * pool.length)];
+        nextIndex = candidates.indexOf(picked);
+      }
     } else {
       const startIndex = activeIndex === -1 ? 0 : activeIndex;
       nextIndex = (startIndex + 1) % candidates.length;
     }
 
     const next = candidates[nextIndex];
+    if (!next || !next.tab) {
+      // Nothing to switch to — skip this tick safely.
+      return;
+    }
 
     await chrome.tabs.update(next.tab.id, { active: true });
 
@@ -766,6 +793,12 @@ chrome.runtime.onStartup.addListener(() => {
 setTimeout(() => restoreFromStorage(), 0);
 
 chrome.runtime.onConnect.addListener((port) => {
+  // Two port names are used by popup.js:
+  //   - 'popup'  — regular toolbar popup; rotation is paused while it's open
+  //                (unless `allowRotationWhilePopupOpen` is set).
+  //   - 'panel'  — standalone window opened via "Open in a window" (popup.html?standalone=1).
+  //                This is intentionally a persistent UI and must NOT pause rotation;
+  //                we just ignore the connection here.
   if (port.name !== 'popup') {
     return;
   }

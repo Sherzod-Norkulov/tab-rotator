@@ -721,45 +721,142 @@ document.addEventListener('DOMContentLoaded', () => {
     setStatus(t('status_export_ready'), 'ok');
   });
 
+  // --- Imported profile JSON validation ---------------------------------
+  // Reasonable ceilings for user-imported JSON. Chrome's storage.local quota is
+  // ~10 MB; we still want to refuse suspicious/runaway inputs early to keep the
+  // UI responsive and protect the storage area from accidental/malicious bloat.
+  const IMPORT_MAX_BYTES = 512 * 1024;            // 512 KB raw JSON text
+  const IMPORT_MAX_PROFILES = 100;
+  const IMPORT_MAX_ENTRIES_PER_PROFILE = 500;
+  const IMPORT_MAX_STRING_LEN = 4096;              // per single string field
+  const IMPORT_MAX_NAME_LEN = 200;
+
+  function safeStr(value, maxLen = IMPORT_MAX_STRING_LEN) {
+    if (typeof value !== 'string') return '';
+    return value.length > maxLen ? value.slice(0, maxLen) : value;
+  }
+
+  function sanitizeEntry(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const url = safeStr(raw.url).trim();
+    if (!url) return null;
+    const entry = {
+      url,
+      name: safeStr(raw.name, IMPORT_MAX_NAME_LEN).trim(),
+      refresh: Boolean(raw.refresh)
+    };
+    const intervalRaw = Number(raw.intervalSec);
+    entry.intervalSec = Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : null;
+    const delayRaw = Number(raw.refreshDelaySec);
+    entry.refreshDelaySec = Number.isFinite(delayRaw) && delayRaw >= 0 ? delayRaw : 0;
+    return entry;
+  }
+
+  function sanitizeConfig(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const intervalRaw = Number(raw.intervalSec);
+    const cfg = {
+      intervalSec: Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : 5,
+      autoStart: Boolean(raw.autoStart),
+      useCustomList: Boolean(raw.useCustomList),
+      openCustomTabs: raw.openCustomTabs !== undefined ? Boolean(raw.openCustomTabs) : true,
+      enableRefreshFlags: raw.enableRefreshFlags !== undefined ? Boolean(raw.enableRefreshFlags) : true,
+      useDedicatedWindow: Boolean(raw.useDedicatedWindow),
+      shuffle: Boolean(raw.shuffle),
+      excludeDomains: safeStr(raw.excludeDomains),
+      badgeCountdown: raw.badgeCountdown !== undefined ? Boolean(raw.badgeCountdown) : true,
+      allowRotationWhilePopupOpen: Boolean(raw.allowRotationWhilePopupOpen),
+      customRawText: safeStr(raw.customRawText)
+    };
+    const rawEntries = Array.isArray(raw.customEntries) ? raw.customEntries : [];
+    const capped = rawEntries.slice(0, IMPORT_MAX_ENTRIES_PER_PROFILE);
+    cfg.customEntries = capped.map(sanitizeEntry).filter(Boolean);
+    return cfg;
+  }
+
+  function validateImportedProfilesJson(text) {
+    if (typeof text !== 'string' || text.length === 0) {
+      return { ok: false, reason: 'empty' };
+    }
+    if (text.length > IMPORT_MAX_BYTES) {
+      return { ok: false, reason: 'too-large' };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      return { ok: false, reason: 'invalid-json' };
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, reason: 'not-object' };
+    }
+
+    const result = { profiles: [], currentConfig: null };
+
+    if (Array.isArray(parsed.profiles)) {
+      const capped = parsed.profiles.slice(0, IMPORT_MAX_PROFILES);
+      for (const p of capped) {
+        if (!p || typeof p !== 'object') continue;
+        const cfg = sanitizeConfig(p.config);
+        if (!cfg) continue;
+        const name = safeStr(p.name, IMPORT_MAX_NAME_LEN).trim();
+        if (!name) continue;
+        result.profiles.push({ name, config: cfg });
+      }
+    }
+
+    if (parsed.current && typeof parsed.current === 'object') {
+      result.currentConfig = sanitizeConfig(parsed.current);
+    } else if (
+      !result.profiles.length &&
+      typeof parsed.name === 'string' &&
+      parsed.intervalSec !== undefined
+    ) {
+      const cfg = sanitizeConfig(parsed);
+      if (cfg) {
+        result.currentConfig = cfg;
+        result.singleProfileName = safeStr(parsed.name, IMPORT_MAX_NAME_LEN).trim();
+      }
+    }
+
+    if (!result.profiles.length && !result.currentConfig) {
+      return { ok: false, reason: 'no-usable-data' };
+    }
+    return { ok: true, value: result };
+  }
+
   importProfileInput.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const text = await file.text();
     try {
-      const json = JSON.parse(text);
+      if (typeof file.size === 'number' && file.size > IMPORT_MAX_BYTES) {
+        setStatus(t('status_import_fail'), 'error');
+        return;
+      }
+      const text = await file.text();
+      const validation = validateImportedProfilesJson(text);
+      if (!validation.ok) {
+        setStatus(t('status_import_fail'), 'error');
+        return;
+      }
+
+      const { profiles: validatedProfiles, currentConfig, singleProfileName } = validation.value;
       const importedName =
         (file.name && file.name.replace(/\.[^/.]+$/, '')) || t('imported_profile_name');
 
-      const ensureArray = (arr) => (Array.isArray(arr) ? arr : []);
-      const incomingProfiles = ensureArray(json.profiles);
       profiles = Array.isArray(profiles) ? profiles : [];
       let appliedConfig = null;
       let selectedIndex = 0;
 
-      if (incomingProfiles.length) {
-        profiles = incomingProfiles;
+      if (validatedProfiles.length) {
+        profiles = validatedProfiles;
         appliedConfig = profiles[0]?.config || null;
         selectedIndex = 0;
-      } else {
-        // support for { name, ...config } without profiles array
-        if (!incomingProfiles.length && json.name && json.intervalSec !== undefined) {
-          const simpleCfg = { ...json };
-          profiles.push({ name: json.name, config: simpleCfg });
-          appliedConfig = simpleCfg;
-          selectedIndex = profiles.length - 1;
-        }
-
-        const currentCfg = json.current ? { ...json.current } : null;
-        if (!appliedConfig && currentCfg) {
-          if (currentCfg.openCustomTabs === undefined) currentCfg.openCustomTabs = true;
-          if (currentCfg.useCustomList === undefined && Array.isArray(currentCfg.customEntries) && currentCfg.customEntries.length) {
-            currentCfg.useCustomList = true;
-          }
-          const name = currentCfg.name || json.name || importedName;
-          profiles.push({ name, config: currentCfg });
-          appliedConfig = currentCfg;
-          selectedIndex = profiles.length - 1;
-        }
+      } else if (currentConfig) {
+        const name = singleProfileName || importedName;
+        profiles.push({ name, config: currentConfig });
+        appliedConfig = currentConfig;
+        selectedIndex = profiles.length - 1;
       }
 
       if (appliedConfig) {
@@ -800,8 +897,9 @@ document.addEventListener('DOMContentLoaded', () => {
       setStatus(t('status_import_ok'), 'ok');
     } catch (err) {
       setStatus(t('status_import_fail'), 'error');
+    } finally {
+      importProfileInput.value = '';
     }
-    importProfileInput.value = '';
   });
 
   startBtn.addEventListener('click', () => {

@@ -16,9 +16,9 @@
 
 Версия должна быть консистентна в следующих местах:
 
-- `manifest.json` → поле `"version"`.
-- `background.js` → fallback-строка `'1.2.0'` в выражении получения версии (на
-  случай, если `chrome.runtime.getManifest()` ещё не готов).
+- `manifest.json` → поле `"version"` — **единственный источник истины** для
+  версии рантайма. `background.js` и popup читают её из
+  `chrome.runtime.getManifest().version`.
 - `CHANGELOG.md` → новая секция `## [X.Y.Z] — YYYY-MM-DD`.
 - `README.md` → строка «**Версия:** X.Y.Z» в шапке.
 
