@@ -200,6 +200,7 @@ Git Bash.
 - Ручной QA-чеклист перед публикацией: [`QA_CHECKLIST.md`](QA_CHECKLIST.md).
 - История изменений: [`CHANGELOG.md`](CHANGELOG.md).
 - Тексты витрины Chrome Web Store: [`STORE_LISTING.md`](STORE_LISTING.md).
+- Ответы для формы публикации Chrome Web Store: [`CWS_SUBMISSION.md`](CWS_SUBMISSION.md).
 
 ## Лицензия
 
