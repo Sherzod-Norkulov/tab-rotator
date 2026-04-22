@@ -25,7 +25,7 @@ const storageArea = chrome.storage.local;
 const manifestVersion = (typeof chrome !== 'undefined' &&
   chrome.runtime &&
   typeof chrome.runtime.getManifest === 'function' &&
-  chrome.runtime.getManifest().version) || '1.1.0';
+  chrome.runtime.getManifest().version) || '1.2.0';
 let lastCandidates = [];
 
 async function ensureDedicatedWindow(entries) {
