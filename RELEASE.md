@@ -75,24 +75,47 @@ unzip -l dist/tab-rotator-<version>.zip
 
 Это гарантирует, что именно собранный артефакт работает, а не dev-дерево.
 
-## 6. Git tag и GitHub Release
+## 6. Git tag и GitHub Release (автоматически)
+
+Начиная с версии 1.2.0 публикация GitHub Release автоматизирована через
+GitHub Actions — см. `.github/workflows/release.yml`.
+
+Последовательность при выпуске:
+
+1. На отдельной ветке обновите `"version"` в `manifest.json` и добавьте
+   секцию в `CHANGELOG.md`, откройте PR в `main`. Workflow `CI`
+   (`.github/workflows/ci.yml`) обязан пройти — валидирует JSON и
+   собирает ZIP через `scripts/package.sh`.
+2. После merge PR в `main` автоматически запускается
+   `.github/workflows/release.yml`:
+   - переиспользует CI (валидация JSON + сборка ZIP),
+   - читает версию из `manifest.json`,
+   - если тега `v<version>` ещё нет — создаёт git-tag и GitHub Release
+     с именем `Tab Rotator v<version>` и приложенным
+     `dist/tab-rotator-<version>.zip`,
+   - описание берёт из секции `## [<version>]` в `CHANGELOG.md`,
+   - если тег/релиз уже существует — завершается корректно без
+     дубликатов.
+
+> Чтобы выпустить новую версию, достаточно поднять `"version"` в
+> `manifest.json`, добавить секцию в `CHANGELOG.md` и смерджить PR в
+> `main`. Всё остальное сделает release workflow.
+
+Ручные команды `git tag` / `gh release create` при штатном процессе
+**больше не нужны** и оставлены ниже только как аварийный fallback.
+
+<details>
+<summary>Ручной fallback (если Actions недоступны)</summary>
 
 ```bash
-git add .
-git commit -m "chore(release): v<version>"
 git tag -a v<version> -m "Tab Rotator v<version>"
-git push origin main
 git push origin v<version>
+gh release create v<version> dist/tab-rotator-<version>.zip \
+  --title "Tab Rotator v<version>" \
+  --notes-file release_notes.md
 ```
 
-На GitHub:
-
-1. Releases → Draft a new release.
-2. Tag: `v<version>`.
-3. Title: `Tab Rotator v<version>`.
-4. Описание: скопируйте соответствующую секцию из `CHANGELOG.md`.
-5. Прикрепите `dist/tab-rotator-<version>.zip`.
-6. Опубликуйте.
+</details>
 
 ## 7. Публикация в Chrome Web Store
 
@@ -123,3 +146,68 @@ git push origin v<version>
    выпустить новую версию (патч), возвращающую прежнее поведение.
 2. Быстро: `git revert` проблемных коммитов → bump патч-версии → пройти шаги 3–7
    заново.
+
+## 10. Автоматизация CI/CD (GitHub Actions)
+
+В репозитории настроены два workflow:
+
+- `.github/workflows/ci.yml` — **CI**. Срабатывает на каждый pull request в
+  `main` и на push в `main`. Шаги:
+  1. Валидация `manifest.json` и всех `_locales/*/messages.json`.
+  2. Проверка, что `"version"` имеет формат `X.Y[.Z[.W]]`.
+  3. Сборка релизного ZIP через `bash scripts/package.sh`.
+  4. Загрузка ZIP как артефакта (`tab-rotator-<version>`).
+
+  Этот workflow также объявлен как **reusable** (`workflow_call`) — его
+  переиспользует release workflow, чтобы логика валидации/сборки жила в
+  одном месте. Рекомендуется сделать CI required check в branch
+  protection для `main`.
+
+- `.github/workflows/release.yml` — **Release**. Срабатывает только на
+  push в `main` (то есть после merge PR). Шаги:
+  1. Job `ci` — полностью прогоняет `ci.yml` как reusable workflow.
+     Если CI падает, релиз не создаётся.
+  2. Job `release` (запускается, только если `ci` зелёный):
+     - читает версию из `manifest.json`,
+     - формирует тег `v<version>` и имя релиза `Tab Rotator v<version>`,
+     - проверяет, существует ли уже GitHub Release или git-тег с таким
+       именем (через `gh release view` и `git ls-remote`),
+     - если существует — завершает работу без ошибки и без дубликата,
+     - если не существует — создаёт аннотированный git-тег, извлекает
+       секцию `## [<version>]` из `CHANGELOG.md` в качестве release
+       notes и создаёт GitHub Release с приложенным
+       `dist/tab-rotator-<version>.zip`.
+
+  Дополнительно:
+  - `concurrency: release-main` — сериализует релизные прогоны по
+    `main`, чтобы исключить гонки при создании тега/релиза.
+  - Минимальные `permissions`: у CI — `contents: read`, у job-а
+    `release` — `contents: write` (нужно для создания тега и релиза).
+  - `gh release create ... --verify-tag` — дополнительная страховка от
+    публикации релиза без git-тега.
+
+### Что должен делать разработчик перед merge
+
+1. В релизном PR поднять `"version"` в `manifest.json` по SemVer.
+2. Добавить секцию `## [<version>] — YYYY-MM-DD` в `CHANGELOG.md`.
+3. Дождаться зелёного CI на PR.
+4. Смерджить PR в `main`.
+
+После merge release workflow сам соберёт ZIP, создаст тег и
+GitHub Release. Никаких `git tag` / `git push --tags` вручную не нужно.
+
+### Что происходит, если тег уже существует
+
+Workflow корректно и безопасно завершается без ошибки: пишет в лог
+сообщение «Релиз `v<version>` уже существует — ничего не делали». Это
+поведение одинаково и для повторных запусков на том же коммите, и для
+push-ей, которые не меняли версию.
+
+### Рекомендации по branch protection для `main`
+
+- Require a pull request before merging.
+- Require status checks to pass → добавить required check `CI /
+  Валидация и сборка ZIP`.
+- Require branches to be up to date before merging.
+- Запретить прямой push в `main`, в том числе админам, если это
+  соответствует процессу команды.

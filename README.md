@@ -24,6 +24,7 @@ Chrome-расширение (Manifest V3) для автоматического 
 - [Устранение проблем](#устранение-проблем)
 - [Приватность и разрешения](#приватность-и-разрешения)
 - [Релиз и QA](#релиз-и-qa)
+- [Автоматизация CI/CD](#автоматизация-cicd)
 - [Лицензия](#лицензия)
 
 ---
@@ -201,6 +202,32 @@ Git Bash.
 - История изменений: [`CHANGELOG.md`](CHANGELOG.md).
 - Тексты витрины Chrome Web Store: [`STORE_LISTING.md`](STORE_LISTING.md).
 - Ответы для формы публикации Chrome Web Store: [`CWS_SUBMISSION.md`](CWS_SUBMISSION.md).
+
+## Автоматизация CI/CD
+
+В репозитории настроены два GitHub Actions workflow:
+
+- **CI** — `.github/workflows/ci.yml`. Запускается на каждый pull
+  request в `main` и на push в `main`. Валидирует `manifest.json` и
+  `_locales/*/messages.json`, проверяет формат версии и собирает
+  релизный ZIP через `scripts/package.sh`, после чего публикует его
+  артефактом. Workflow также объявлен как reusable (`workflow_call`) —
+  его переиспользует release workflow. Подходит как required check в
+  branch protection для `main`.
+- **Release** — `.github/workflows/release.yml`. Запускается только на
+  push в `main` (т. е. после merge PR). Сначала полностью прогоняет
+  CI; если проверки прошли, читает версию из `manifest.json`,
+  проверяет, что тега `v<version>` ещё нет, создаёт его и публикует
+  GitHub Release с именем `Tab Rotator v<version>`, прикладывая
+  `dist/tab-rotator-<version>.zip`. Release notes берутся из секции
+  `## [<version>]` в `CHANGELOG.md`. Если тег уже существует, workflow
+  корректно завершается без дубликата. Параллельные релизные прогоны
+  сериализуются через `concurrency: release-main`.
+
+Из этого следует простое правило выпуска: поднять `"version"` в
+`manifest.json`, добавить секцию в `CHANGELOG.md`, смерджить PR в
+`main` — всё остальное сделает автоматизация. Подробнее см.
+[`RELEASE.md`](RELEASE.md#10-автоматизация-cicd-github-actions).
 
 ## Лицензия
 

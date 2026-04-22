@@ -1,0 +1,200 @@
+name: Release
+
+# Release-пайплайн Tab Rotator.
+#
+# Запускается только при push в основную ветку (main) — то есть после
+# merge pull request. На сам pull request этот workflow не срабатывает,
+# релизы не создаются до слияния.
+#
+# Последовательность:
+#   1. Job `ci` — переиспользует `.github/workflows/ci.yml` (reusable
+#      workflow) и выполняет все обязательные проверки + сборку ZIP.
+#      Если CI падает, релиз не создаётся.
+#   2. Job `release` — зависит от `ci`:
+#       * читает версию из manifest.json,
+#       * проверяет, существует ли уже тег vX.Y.Z или GitHub Release,
+#       * если уже существует — завершает работу корректно, без ошибки
+#         и без дубликата,
+#       * иначе создаёт git-tag, извлекает секцию из CHANGELOG.md и
+#         публикует GitHub Release с прикреплённым ZIP.
+#
+# Версия — единственный источник истины — manifest.json. Чтобы выпустить
+# новую версию, достаточно поднять version в manifest.json и смерджить PR
+# в main. Никаких ручных команд `git tag`/`gh release create` не нужно.
+
+on:
+  push:
+    branches:
+      - main
+
+# Параллельные релизные прогоны по main сериализуются, чтобы избежать
+# гонок при создании тега/релиза. Активный прогон не отменяется —
+# текущий должен корректно завершиться, следующий дождётся окончания.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Шаг 1 — обязательные проверки и сборка. Переиспользуем тот же
+  # workflow, который запускается на pull request, чтобы логика
+  # валидации жила в одном месте.
+  ci:
+    name: CI (обязательные проверки)
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # Шаг 2 — публикация GitHub Release. Запускается только если CI прошёл.
+  release:
+    name: Публикация GitHub Release
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Требуется для создания тегов и релизов.
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Полный fetch-depth нужен, чтобы корректно создавать
+          # аннотированный тег на точном коммите main.
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Получить версию из CI
+        id: version
+        env:
+          VERSION: ${{ needs.ci.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${VERSION}" ]]; then
+            echo "::error::CI не вернул version; проверьте ci.yml outputs"
+            exit 1
+          fi
+          tag="v${VERSION}"
+          release_name="Tab Rotator ${tag}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}"         >> "$GITHUB_OUTPUT"
+          echo "name=${release_name}" >> "$GITHUB_OUTPUT"
+          echo "Версия: ${VERSION}, тег: ${tag}"
+
+      - name: Проверить, существует ли релиз или тег
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          exists="false"
+          # 1) Проверяем GitHub Release по тегу.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release '$TAG' уже существует — публикация пропускается."
+            exists="true"
+          fi
+          # 2) Проверяем git-тег в remote.
+          if [[ "$exists" != "true" ]]; then
+            if git ls-remote --tags --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Git-тег '$TAG' уже существует в origin — публикация пропускается."
+              exists="true"
+            fi
+          fi
+          echo "exists=${exists}" >> "$GITHUB_OUTPUT"
+
+      - name: Скачать ZIP из CI job
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ci.outputs.artifact-name }}
+          path: dist
+
+      - name: Проверить, что ZIP на месте
+        if: steps.check.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          zip_path="dist/tab-rotator-${VERSION}.zip"
+          if [[ ! -f "$zip_path" ]]; then
+            echo "::error::Артефакт не найден: $zip_path"
+            ls -la dist || true
+            exit 1
+          fi
+          echo "Готово к публикации: $zip_path ($(wc -c < "$zip_path") байт)"
+
+      - name: Извлечь секцию из CHANGELOG.md
+        if: steps.check.outputs.exists == 'false'
+        id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes_file="release_notes.md"
+          if [[ -f CHANGELOG.md ]]; then
+            # Берём секцию '## [VERSION]' до следующей '## ['.
+            awk -v v="$VERSION" '
+              BEGIN { found = 0 }
+              /^## \[/ {
+                if (found) { exit }
+                # Сопоставляем именно [VERSION] — без учёта даты после тире.
+                if ($0 ~ "^## \\[" v "\\]") { found = 1; next }
+              }
+              found { print }
+            ' CHANGELOG.md > "$notes_file" || true
+          fi
+          # Подчищаем ведущие/замыкающие пустые строки.
+          if [[ -s "$notes_file" ]]; then
+            # Удалить ведущие пустые строки.
+            sed -i -e '/./,$!d' "$notes_file"
+            echo "Секция для v${VERSION} найдена в CHANGELOG.md."
+          else
+            # Fallback: короткое авто-описание, если секции нет.
+            cat > "$notes_file" <<EOF
+          Автоматический релиз Tab Rotator v${VERSION}.
+
+          Подробные изменения см. в [CHANGELOG.md](./CHANGELOG.md).
+          EOF
+            echo "::warning::Секция для v${VERSION} не найдена в CHANGELOG.md — использован fallback."
+          fi
+          echo "path=${notes_file}" >> "$GITHUB_OUTPUT"
+
+      - name: Создать git-тег
+        if: steps.check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "Tab Rotator $TAG"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Создать GitHub Release и приложить ZIP
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_NAME: ${{ steps.version.outputs.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          NOTES_PATH: ${{ steps.notes.outputs.path }}
+        run: |
+          set -euo pipefail
+          zip_path="dist/tab-rotator-${VERSION}.zip"
+          gh release create "$TAG" "$zip_path" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_NAME" \
+            --notes-file "$NOTES_PATH" \
+            --verify-tag
+          echo "Опубликован GitHub Release: $RELEASE_NAME"
+
+      - name: Итог
+        run: |
+          if [[ "${{ steps.check.outputs.exists }}" == "true" ]]; then
+            echo "Релиз ${{ steps.version.outputs.tag }} уже существует — ничего не делали."
+          else
+            echo "Создан релиз ${{ steps.version.outputs.tag }} с артефактом dist/tab-rotator-${{ steps.version.outputs.version }}.zip"
+          fi
