@@ -1,0 +1,132 @@
+name: CI
+
+# CI-пайплайн Tab Rotator:
+# * запускается на любой pull request в основную ветку,
+# * запускается на push в основную ветку (после merge PR),
+# * может быть вызван как reusable workflow из release.yml, чтобы не
+#   дублировать логику валидации и сборки.
+#
+# Задачи job-а `build`:
+#   1. Проверить валидность ключевых JSON (manifest, локализации).
+#   2. Проверить, что версия в manifest.json имеет формат X.Y[.Z[.W]].
+#   3. Собрать релизный ZIP через scripts/package.sh.
+#   4. Выгрузить ZIP как артефакт, чтобы release.yml мог его переиспользовать.
+#
+# Workflow пригоден для branch protection: его можно сделать required check.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_call:
+    outputs:
+      version:
+        description: "Версия расширения, прочитанная из manifest.json."
+        value: ${{ jobs.build.outputs.version }}
+      artifact-name:
+        description: "Имя artifact-а со собранным ZIP."
+        value: ${{ jobs.build.outputs.artifact-name }}
+
+# Для одной ветки/PR одновременно выполняется только один прогон CI —
+# предыдущий отменяется, чтобы не держать очередь и не расходовать
+# минуты на устаревшие коммиты. Для push в main отмены не делаем,
+# чтобы не прерывать сборку, от которой зависит релиз.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Валидация и сборка ZIP
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact-name: ${{ steps.artifact-name.outputs.name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Установка zip/unzip
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends zip unzip
+
+      - name: Прочитать версию из manifest.json
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' manifest.json \
+            | head -n1 \
+            | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+          if [[ -z "${version}" ]]; then
+            echo "::error::Не удалось прочитать version из manifest.json"
+            exit 1
+          fi
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "::error::Версия '${version}' не соответствует формату X.Y[.Z[.W]]"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Версия из manifest.json: ${version}"
+
+      - name: Проверить валидность JSON-файлов
+        run: |
+          set -euo pipefail
+          # Проверяем все JSON, которые реально входят в расширение:
+          # manifest + сообщения локализации. Python3 есть на ubuntu-latest
+          # из коробки, сторонние зависимости не нужны.
+          files=(
+            manifest.json
+            _locales/en/messages.json
+            _locales/ru/messages.json
+            _locales/uz/messages.json
+          )
+          fail=0
+          for f in "${files[@]}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error file=$f::Файл не найден"
+              fail=1
+              continue
+            fi
+            if ! python3 -c "import json,sys; json.load(open(sys.argv[1], encoding='utf-8'))" "$f"; then
+              echo "::error file=$f::Невалидный JSON"
+              fail=1
+            else
+              echo "ok: $f"
+            fi
+          done
+          exit "$fail"
+
+      - name: Собрать релизный ZIP
+        run: bash scripts/package.sh
+
+      - name: Проверить, что ZIP собран
+        id: artifact-name
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          zip_path="dist/tab-rotator-${version}.zip"
+          if [[ ! -f "$zip_path" ]]; then
+            echo "::error::Ожидаемый ZIP не создан: $zip_path"
+            exit 1
+          fi
+          echo "Собран: $zip_path ($(wc -c < "$zip_path") байт)"
+          echo "name=tab-rotator-${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Загрузить ZIP как артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: dist/tab-rotator-${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 30
