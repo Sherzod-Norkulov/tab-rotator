@@ -74,6 +74,7 @@
   "status_refresh_reset": { "message": "Все задачи автообновления очищены." },
   "status_refresh_empty": { "message": "Нет задач автообновления." },
   "status_refresh_no_tab": { "message": "Нет доступной активной страницы." },
+  "task_details": { "message": "$1 · каждые $2 сек" },
   "status_error_prefix": { "message": "Ошибка: $1" },
 
   "prompt_profile_name": { "message": "Название профиля" },

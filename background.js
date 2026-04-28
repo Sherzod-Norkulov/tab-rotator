@@ -24,6 +24,9 @@ const iconOff = {
   "128": "assets/icons/icon-off-icon128.png"
 };
 const storageArea = chrome.storage.local;
+const IDLE_DETECTION_THRESHOLD_SEC = 60;
+const PAUSE_CHECK_INTERVAL_MS = 1000;
+const PAUSE_BADGE_TEXT = '⏸';
 // In MV3 service workers, chrome.runtime.getManifest() is available synchronously.
 // Keep a defensive fallback ('0.0.0') only for unexpected early execution; we no
 // longer hard-code a second copy of the release version here — that was a source
@@ -242,6 +245,13 @@ function normalizePausePolicy(value) {
   return ['never', 'active', 'idle'].includes(value) ? value : 'never';
 }
 
+function generateRefreshTaskId() {
+  if (globalThis.crypto?.randomUUID) {
+    return `refresh-${globalThis.crypto.randomUUID()}`;
+  }
+  return `refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function normalizeRefreshTasks(tasks) {
   if (!Array.isArray(tasks)) {
     return [];
@@ -262,7 +272,7 @@ function normalizeRefreshTasks(tasks) {
       }
       seen.add(key);
       return {
-        id: typeof task?.id === 'string' && task.id ? task.id : `refresh-${Date.now()}-${seen.size}`,
+        id: typeof task?.id === 'string' && task.id ? task.id : generateRefreshTaskId(),
         url,
         name: typeof task?.name === 'string' ? task.name.trim() : '',
         intervalSec,
@@ -334,7 +344,7 @@ async function getRotationPauseReason() {
   }
 
   try {
-    const state = await chrome.idle.queryState(60);
+    const state = await chrome.idle.queryState(IDLE_DETECTION_THRESHOLD_SEC);
     if (policy === 'active' && state === 'active') {
       return 'active';
     }
@@ -506,7 +516,7 @@ async function rotateTabs() {
   try {
     pauseReason = await getRotationPauseReason();
     if (pauseReason) {
-      nextDelayMs = 1000;
+      nextDelayMs = PAUSE_CHECK_INTERVAL_MS;
       return;
     }
 
@@ -740,7 +750,7 @@ function scheduleNextTick(delayMs) {
   if (currentSettings.badgeCountdown) {
     if (pauseReason) {
       chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' }).catch(() => {});
-      chrome.action.setBadgeText({ text: 'II' }).catch(() => {});
+      chrome.action.setBadgeText({ text: PAUSE_BADGE_TEXT }).catch(() => {});
     } else {
       const endTime = Date.now() + safeDelay;
       chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' }).catch(() => {});

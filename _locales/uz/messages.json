@@ -74,6 +74,7 @@
   "status_refresh_reset": { "message": "Barcha avto-yangilash vazifalari tozalandi." },
   "status_refresh_empty": { "message": "Avto-yangilash vazifalari yo'q." },
   "status_refresh_no_tab": { "message": "Faol sahifa mavjud emas." },
+  "task_details": { "message": "$1 · har $2 sek" },
   "status_error_prefix": { "message": "Xato: $1" },
 
   "prompt_profile_name": { "message": "Profil nomi" },

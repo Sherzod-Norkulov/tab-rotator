@@ -74,6 +74,7 @@
   "status_refresh_reset": { "message": "All auto-refresh tasks cleared." },
   "status_refresh_empty": { "message": "No auto-refresh tasks." },
   "status_refresh_no_tab": { "message": "No active page is available." },
+  "task_details": { "message": "$1 · every $2 sec" },
   "status_error_prefix": { "message": "Error: $1" },
 
   "prompt_profile_name": { "message": "Profile name" },

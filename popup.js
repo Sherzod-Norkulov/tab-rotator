@@ -406,7 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
       title.textContent = task.name || task.url;
       const url = document.createElement('div');
       url.className = 'task-url';
-      url.textContent = `${task.url} · ${task.intervalSec}${t('suffix_seconds')}`;
+      url.textContent = t('task_details', [task.url, task.intervalSec]);
       text.append(title, url);
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -452,12 +452,14 @@ document.addEventListener('DOMContentLoaded', () => {
       setStatus(t('status_interval_invalid'), 'error');
       return;
     }
-    const intervalSec = Math.max(1, rawIntervalSec);
+    const intervalSec = rawIntervalSec;
     if (!activeTabInfo?.url) {
       setStatus(t('status_refresh_no_tab'), 'error');
       return;
     }
-    const id = `refresh-${Date.now()}`;
+    const id = globalThis.crypto?.randomUUID
+      ? `refresh-${globalThis.crypto.randomUUID()}`
+      : `refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const existing = refreshTasks.findIndex((task) => task.url === activeTabInfo.url);
     const task = {
       id: existing >= 0 ? refreshTasks[existing].id : id,
