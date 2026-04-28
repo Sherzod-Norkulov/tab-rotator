@@ -615,9 +615,6 @@ async function rotateTabs() {
     console.error('Ошибка переключения вкладок:', error);
   } finally {
     if (isRunning) {
-      if (!pauseReason) {
-        pauseReason = null;
-      }
       scheduleNextTick(nextDelayMs);
     }
   }

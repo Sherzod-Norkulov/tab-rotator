@@ -447,11 +447,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   startRefreshCurrentBtn.addEventListener('click', async () => {
-    const intervalSec = Math.max(1, Number(refreshIntervalInput.value) || 0);
-    if (!intervalSec) {
+    const rawIntervalSec = Number(refreshIntervalInput.value);
+    if (!Number.isFinite(rawIntervalSec) || rawIntervalSec < 1) {
       setStatus(t('status_interval_invalid'), 'error');
       return;
     }
+    const intervalSec = Math.max(1, rawIntervalSec);
     if (!activeTabInfo?.url) {
       setStatus(t('status_refresh_no_tab'), 'error');
       return;
