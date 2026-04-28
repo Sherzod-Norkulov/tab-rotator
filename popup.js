@@ -446,6 +446,27 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function normalizeTaskUrl(url) {
+    const value = typeof url === 'string' ? url.trim() : '';
+    if (!value) {
+      return '';
+    }
+    try {
+      return new URL(value).href;
+    } catch (e) {
+      return value;
+    }
+  }
+
+  function taskIdForUrl(url) {
+    const normalized = normalizeTaskUrl(url);
+    let hash = 0;
+    for (let i = 0; i < normalized.length; i += 1) {
+      hash = ((hash << 5) - hash + normalized.charCodeAt(i)) | 0;
+    }
+    return `refresh-${Math.abs(hash).toString(36)}`;
+  }
+
   startRefreshCurrentBtn.addEventListener('click', async () => {
     const rawIntervalSec = Number(refreshIntervalInput.value);
     if (!Number.isFinite(rawIntervalSec) || rawIntervalSec < 1) {
@@ -457,13 +478,11 @@ document.addEventListener('DOMContentLoaded', () => {
       setStatus(t('status_refresh_no_tab'), 'error');
       return;
     }
-    const id = globalThis.crypto?.randomUUID
-      ? `refresh-${globalThis.crypto.randomUUID()}`
-      : `refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const existing = refreshTasks.findIndex((task) => task.url === activeTabInfo.url);
+    const normalizedUrl = normalizeTaskUrl(activeTabInfo.url);
+    const existing = refreshTasks.findIndex((task) => normalizeTaskUrl(task.url) === normalizedUrl);
     const task = {
-      id: existing >= 0 ? refreshTasks[existing].id : id,
-      url: activeTabInfo.url,
+      id: existing >= 0 ? refreshTasks[existing].id : taskIdForUrl(normalizedUrl),
+      url: normalizedUrl,
       name: activeTabInfo.title,
       intervalSec,
       enabled: true

@@ -605,9 +605,8 @@ async function rotateTabs() {
 
     await chrome.tabs.update(next.tab.id, { active: true });
 
-    if (currentSettings.enableRefreshFlags && next.refresh && !isRefreshExcluded(
-      typeof next.tab.pendingUrl === 'string' ? next.tab.pendingUrl : next.tab.url
-    )) {
+    const nextTabUrl = typeof next.tab.pendingUrl === 'string' ? next.tab.pendingUrl : next.tab.url;
+    if (currentSettings.enableRefreshFlags && next.refresh && !isRefreshExcluded(nextTabUrl)) {
       const delay = Number(next.refreshDelaySec) || 0;
       if (delay > 0) {
         await new Promise((resolve) => setTimeout(resolve, delay * 1000));
