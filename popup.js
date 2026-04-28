@@ -473,7 +473,6 @@ document.addEventListener('DOMContentLoaded', () => {
       setStatus(t('status_interval_invalid'), 'error');
       return;
     }
-    const intervalSec = rawIntervalSec;
     if (!activeTabInfo?.url) {
       setStatus(t('status_refresh_no_tab'), 'error');
       return;
@@ -484,7 +483,7 @@ document.addEventListener('DOMContentLoaded', () => {
       id: existing >= 0 ? refreshTasks[existing].id : taskIdForUrl(normalizedUrl),
       url: normalizedUrl,
       name: activeTabInfo.title,
-      intervalSec,
+      intervalSec: rawIntervalSec,
       enabled: true
     };
     if (existing >= 0) {

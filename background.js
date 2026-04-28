@@ -325,7 +325,7 @@ function scheduleRefreshTask(task) {
   }
   const timer = setTimeout(() => {
     runRefreshTask(task.id).catch((err) => console.error('runRefreshTask error', err));
-  }, Math.max(1, Number(task.intervalSec) || 1) * 1000);
+  }, task.intervalSec * 1000);
   refreshTaskTimers.set(task.id, timer);
 }
 
