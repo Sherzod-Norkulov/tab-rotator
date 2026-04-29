@@ -115,6 +115,10 @@ jobs:
             echo "::error::Не удалось извлечь version из имени ZIP: $zip_name"
             exit 1
           fi
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "::error::Версия '${version}' из имени ZIP '${zip_name}' не соответствует формату X.Y[.Z[.W]]"
+            exit 1
+          fi
           echo "Собран: $zip_path ($(wc -c < "$zip_path") байт)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "name=tab-rotator-${version}" >> "$GITHUB_OUTPUT"
