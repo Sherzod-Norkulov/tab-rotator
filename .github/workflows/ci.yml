@@ -1,10 +1,9 @@
 name: CI
 
-# CI-пайплайн Tab Rotator:
-# * запускается на любой pull request в основную ветку,
-# * запускается на push в основную ветку (после merge PR),
-# * может быть вызван как reusable workflow из release.yml, чтобы не
-#   дублировать логику валидации и сборки.
+# Переиспользуемый CI-пайплайн Tab Rotator.
+# Вызывается wrapper-workflow'ами для pull request и release-сценария,
+# чтобы branch protection и релиз использовали один и тот же job-граф
+# и одно и то же имя required-check.
 #
 # Задачи job-а `build`:
 #   1. Проверить JSON и JS-исходники расширения.
@@ -15,12 +14,6 @@ name: CI
 # Workflow пригоден для branch protection: его можно сделать required check.
 
 on:
-  pull_request:
-    branches:
-      - main
-  push:
-    branches:
-      - main
   workflow_call:
     outputs:
       version:
@@ -29,14 +22,6 @@ on:
       artifact-name:
         description: "Имя artifact-а со собранным ZIP."
         value: ${{ jobs.build.outputs.artifact-name }}
-
-# Для одной ветки/PR одновременно выполняется только один прогон CI —
-# предыдущий отменяется, чтобы не держать очередь и не расходовать
-# минуты на устаревшие коммиты. Для push в main отмены не делаем,
-# чтобы не прерывать сборку, от которой зависит релиз.
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

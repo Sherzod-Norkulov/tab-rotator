@@ -1,0 +1,25 @@
+name: PR Checks
+
+# Wrapper для pull request: создаёт тот самый required check
+# `CI (обязательные проверки) / Валидация и сборка ZIP`, который
+# ожидает branch protection, и переиспользует общий ci.yml.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# Для одного PR держим только самый свежий прогон.
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI (обязательные проверки)
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
