@@ -99,14 +99,20 @@ jobs:
         id: artifact-meta
         run: |
           set -euo pipefail
-          version="$(python3 -c "import json; print(json.load(open('manifest.json', encoding='utf-8'))['version'])")"
-          if [[ -z "${version}" ]]; then
-            echo "::error::Не удалось прочитать version из manifest.json после сборки"
+          shopt -s nullglob
+          zip_files=(dist/tab-rotator-*.zip)
+          shopt -u nullglob
+          if [[ "${#zip_files[@]}" -ne 1 ]]; then
+            echo "::error::После сборки ожидался ровно один ZIP в dist/, найдено: ${#zip_files[@]}"
+            ls -la dist || true
             exit 1
           fi
-          zip_path="dist/tab-rotator-${version}.zip"
-          if [[ ! -f "$zip_path" ]]; then
-            echo "::error::Ожидаемый ZIP не создан: $zip_path"
+          zip_path="${zip_files[0]}"
+          zip_name="$(basename "$zip_path")"
+          version="${zip_name#tab-rotator-}"
+          version="${version%.zip}"
+          if [[ -z "${version}" ]]; then
+            echo "::error::Не удалось извлечь version из имени ZIP: $zip_name"
             exit 1
           fi
           echo "Собран: $zip_path ($(wc -c < "$zip_path") байт)"
