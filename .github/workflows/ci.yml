@@ -65,8 +65,9 @@ jobs:
         run: |
           set -euo pipefail
           # Проверяем manifest + локализации как JSON и runtime-скрипты
-          # через node --check. Это покрывает синтаксис исходников, а
-          # package.sh ниже отвечает уже за релизные инварианты и ZIP.
+          # через node --check. Для JS это именно syntax-only проверка:
+          # она ловит ошибки парсинга, а не runtime-логику. package.sh
+          # ниже отвечает уже за релизные инварианты и ZIP.
           json_files=(
             manifest.json
             _locales/en/messages.json
