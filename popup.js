@@ -716,12 +716,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (safeIndex === NO_PROFILE_SELECTED) {
       defaultConfigCache = { ...config };
+      if (uiRunning) {
+        await storageArea.set({
+          defaultConfig: { ...config },
+          selectedProfileIndex: null
+        });
+        return;
+      }
+
       await storageArea.set({
         ...config,
         customEntries: config.customEntries,
         activeConfig: null,
         selectedProfileIndex: null,
-        isRunning: uiRunning,
+        isRunning: false,
         defaultConfig: { ...config }
       });
     } else {
@@ -924,7 +932,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const cfg = {
       intervalSec: Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : 5,
       autoStart: Boolean(raw.autoStart),
-      useCustomList: Boolean(raw.useCustomList),
+      useCustomList: false,
       openCustomTabs: raw.openCustomTabs !== undefined ? Boolean(raw.openCustomTabs) : true,
       enableRefreshFlags: raw.enableRefreshFlags !== undefined ? Boolean(raw.enableRefreshFlags) : true,
       useDedicatedWindow: Boolean(raw.useDedicatedWindow),
@@ -939,6 +947,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const rawEntries = Array.isArray(raw.customEntries) ? raw.customEntries : [];
     const capped = rawEntries.slice(0, IMPORT_MAX_ENTRIES_PER_PROFILE);
     cfg.customEntries = capped.map(sanitizeEntry).filter(Boolean);
+    cfg.useCustomList = raw.useCustomList !== undefined ? Boolean(raw.useCustomList) : cfg.customEntries.length > 0;
     const rawTasks = Array.isArray(raw.refreshTasks) ? raw.refreshTasks : [];
     cfg.refreshTasks = rawTasks
       .slice(0, IMPORT_MAX_ENTRIES_PER_PROFILE)
@@ -1029,6 +1038,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const importedName =
         (file.name && file.name.replace(/\.[^/.]+$/, '')) || t('imported_profile_name');
 
+      if (uiRunning) {
+        await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ type: 'STOP' }, () => {
+            resolve();
+          });
+        });
+        setRunningUi(false);
+      }
+
       profiles = Array.isArray(profiles) ? profiles : [];
       let appliedConfig = null;
       let selectedIndex = 0;
@@ -1045,7 +1063,13 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (appliedConfig) {
-        applyConfig(appliedConfig);
+        const wasInitializing = isInitializing;
+        isInitializing = true;
+        try {
+          applyConfig(appliedConfig, true);
+        } finally {
+          isInitializing = wasInitializing;
+        }
         lastSelectedProfileIndex = profiles.length ? selectedIndex : NO_PROFILE_SELECTED;
         if (selectedIndex >= 0) {
           await storageArea.set({
@@ -1079,6 +1103,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         profileSelect.value = '';
       }
+      setRunningUi(false);
       setStatus(t('status_import_ok'), 'ok');
     } catch (err) {
       setStatus(t('status_import_fail'), 'error');
@@ -1109,27 +1134,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const payload = { ...cfg };
 
-    if (lastSelectedProfileIndex === NO_PROFILE_SELECTED) {
-      defaultConfigCache = payload;
-      storageArea
-        .set({
-          ...payload,
-          activeConfig: null,
-          isRunning: true,
-          selectedProfileIndex: null,
-          defaultConfig: payload
-        })
-        .catch(() => {});
-    } else {
-      storageArea
-        .set({
-          activeConfig: payload,
-          isRunning: true,
-          selectedProfileIndex: lastSelectedProfileIndex
-        })
-        .catch(() => {});
-    }
-
     chrome.runtime.sendMessage(
       { type: 'START', ...payload },
       (response) => {
@@ -1143,6 +1147,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (response && response.ok) {
+          if (lastSelectedProfileIndex === NO_PROFILE_SELECTED) {
+            defaultConfigCache = payload;
+            storageArea
+              .set({
+                ...payload,
+                activeConfig: null,
+                isRunning: true,
+                selectedProfileIndex: null,
+                defaultConfig: payload
+              })
+              .catch(() => {});
+          } else {
+            storageArea
+              .set({
+                activeConfig: payload,
+                isRunning: true,
+                selectedProfileIndex: lastSelectedProfileIndex
+              })
+              .catch(() => {});
+          }
+
           const listInfo = cfg.useCustomList
             ? t('list_info_custom', [cfg.customEntries.length])
             : t('list_info_all_tabs');

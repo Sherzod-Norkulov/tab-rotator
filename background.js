@@ -101,7 +101,7 @@ const defaultSettings = {
   useCustomList: false,
   customEntries: [],
   openCustomTabs: true,
-  enableRefreshFlags: false,
+  enableRefreshFlags: true,
   customRawText: '',
   useDedicatedWindow: false,
   shuffle: false,
