@@ -1,26 +1,19 @@
 name: CI
 
-# CI-пайплайн Tab Rotator:
-# * запускается на любой pull request в основную ветку,
-# * запускается на push в основную ветку (после merge PR),
-# * может быть вызван как reusable workflow из release.yml, чтобы не
-#   дублировать логику валидации и сборки.
+# Переиспользуемый CI-пайплайн Tab Rotator.
+# Вызывается wrapper-workflow'ами для pull request и release-сценария,
+# чтобы branch protection и релиз использовали один и тот же job-граф
+# и одно и то же имя required-check.
 #
 # Задачи job-а `build`:
-#   1. Проверить валидность ключевых JSON (manifest, локализации).
-#   2. Проверить, что версия в manifest.json имеет формат X.Y[.Z[.W]].
-#   3. Собрать релизный ZIP через scripts/package.sh.
-#   4. Выгрузить ZIP как артефакт, чтобы release.yml мог его переиспользовать.
+#   1. Проверить JSON и JS-исходники расширения.
+#   2. Собрать релизный ZIP через scripts/package.sh
+#      (там же валидируются version и обязательные runtime-файлы).
+#   3. Выгрузить ZIP как артефакт, чтобы release.yml мог его переиспользовать.
 #
 # Workflow пригоден для branch protection: его можно сделать required check.
 
 on:
-  pull_request:
-    branches:
-      - main
-  push:
-    branches:
-      - main
   workflow_call:
     outputs:
       version:
@@ -29,14 +22,6 @@ on:
       artifact-name:
         description: "Имя artifact-а со собранным ZIP."
         value: ${{ jobs.build.outputs.artifact-name }}
-
-# Для одной ветки/PR одновременно выполняется только один прогон CI —
-# предыдущий отменяется, чтобы не держать очередь и не расходовать
-# минуты на устаревшие коммиты. Для push в main отмены не делаем,
-# чтобы не прерывать сборку, от которой зависит релиз.
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -48,8 +33,8 @@ jobs:
     timeout-minutes: 10
 
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      artifact-name: ${{ steps.artifact-name.outputs.name }}
+      version: ${{ steps.artifact-meta.outputs.version }}
+      artifact-name: ${{ steps.artifact-meta.outputs.name }}
 
     steps:
       - name: Checkout
@@ -61,38 +46,25 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends zip unzip
 
-      - name: Прочитать версию из manifest.json
-        id: version
+      - name: Проверить исходники расширения
         run: |
           set -euo pipefail
-          version="$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' manifest.json \
-            | head -n1 \
-            | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
-          if [[ -z "${version}" ]]; then
-            echo "::error::Не удалось прочитать version из manifest.json"
-            exit 1
-          fi
-          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
-            echo "::error::Версия '${version}' не соответствует формату X.Y[.Z[.W]]"
-            exit 1
-          fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "Версия из manifest.json: ${version}"
-
-      - name: Проверить валидность JSON-файлов
-        run: |
-          set -euo pipefail
-          # Проверяем все JSON, которые реально входят в расширение:
-          # manifest + сообщения локализации. Python3 есть на ubuntu-latest
-          # из коробки, сторонние зависимости не нужны.
-          files=(
+          # Проверяем manifest + локализации как JSON и runtime-скрипты
+          # через node --check. Для JS это именно syntax-only проверка:
+          # она ловит ошибки парсинга, а не runtime-логику. package.sh
+          # ниже отвечает уже за релизные инварианты и ZIP.
+          json_files=(
             manifest.json
             _locales/en/messages.json
             _locales/ru/messages.json
             _locales/uz/messages.json
           )
+          js_files=(
+            background.js
+            popup.js
+          )
           fail=0
-          for f in "${files[@]}"; do
+          for f in "${json_files[@]}"; do
             if [[ ! -f "$f" ]]; then
               echo "::error file=$f::Файл не найден"
               fail=1
@@ -105,28 +77,56 @@ jobs:
               echo "ok: $f"
             fi
           done
+          for f in "${js_files[@]}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error file=$f::Файл не найден"
+              fail=1
+              continue
+            fi
+            if ! node --check "$f"; then
+              echo "::error file=$f::Невалидный JavaScript"
+              fail=1
+            else
+              echo "ok: $f"
+            fi
+          done
           exit "$fail"
 
       - name: Собрать релизный ZIP
         run: bash scripts/package.sh
 
-      - name: Проверить, что ZIP собран
-        id: artifact-name
+      - name: Подготовить метаданные артефакта
+        id: artifact-meta
         run: |
           set -euo pipefail
-          version="${{ steps.version.outputs.version }}"
-          zip_path="dist/tab-rotator-${version}.zip"
-          if [[ ! -f "$zip_path" ]]; then
-            echo "::error::Ожидаемый ZIP не создан: $zip_path"
+          shopt -s nullglob
+          zip_files=(dist/tab-rotator-*.zip)
+          shopt -u nullglob
+          if [[ "${#zip_files[@]}" -ne 1 ]]; then
+            echo "::error::После сборки ожидался ровно один ZIP в dist/, найдено: ${#zip_files[@]}"
+            ls -la dist || true
+            exit 1
+          fi
+          zip_path="${zip_files[0]}"
+          zip_name="$(basename "$zip_path")"
+          version="${zip_name#tab-rotator-}"
+          version="${version%.zip}"
+          if [[ -z "${version}" ]]; then
+            echo "::error::Не удалось извлечь version из имени ZIP: $zip_name"
+            exit 1
+          fi
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "::error::Версия '${version}' из имени ZIP '${zip_name}' не соответствует формату X.Y[.Z[.W]]"
             exit 1
           fi
           echo "Собран: $zip_path ($(wc -c < "$zip_path") байт)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "name=tab-rotator-${version}" >> "$GITHUB_OUTPUT"
 
       - name: Загрузить ZIP как артефакт
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.artifact-name.outputs.name }}
-          path: dist/tab-rotator-${{ steps.version.outputs.version }}.zip
+          name: ${{ steps.artifact-meta.outputs.name }}
+          path: dist/tab-rotator-${{ steps.artifact-meta.outputs.version }}.zip
           if-no-files-found: error
           retention-days: 30

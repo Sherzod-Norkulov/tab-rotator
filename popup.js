@@ -7,7 +7,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const stopBtn = document.getElementById('stop');
   const statusEl = document.getElementById('status');
   const openInWindowBtn = document.getElementById('openInWindow');
+  const darkModeToggleBtn = document.getElementById('darkModeToggle');
   const autoStartCheckbox = document.getElementById('autoStart');
+  const pausePolicySelect = document.getElementById('pausePolicy');
   const useCustomListCheckbox = document.getElementById('useCustomList');
   const openCustomTabsCheckbox = document.getElementById('openCustomTabs');
   const useDedicatedWindowCheckbox = document.getElementById('useDedicatedWindow');
@@ -15,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const allowRotationWhilePopupOpenCheckbox = document.getElementById('allowRotationWhilePopupOpen');
   const orderModeSelect = document.getElementById('orderMode');
   const excludeDomainsInput = document.getElementById('excludeDomains');
+  const noRefreshDomainsInput = document.getElementById('noRefreshDomains');
   const excludeToggle = document.getElementById('excludeToggle');
   const profileSelect = document.getElementById('profileSelect');
   const applyProfileBtn = document.getElementById('applyProfile');
@@ -27,8 +30,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const footerVersionEl = document.getElementById('footerVersion');
   const entriesContainer = document.getElementById('entries');
   const addEntryBtn = document.getElementById('addEntry');
+  const refreshIntervalInput = document.getElementById('refreshInterval');
+  const activeTabUrlEl = document.getElementById('activeTabUrl');
+  const startRefreshCurrentBtn = document.getElementById('startRefreshCurrent');
+  const resetRefreshTasksBtn = document.getElementById('resetRefreshTasks');
+  const refreshTasksContainer = document.getElementById('refreshTasks');
   const storageArea = chrome.storage.local;
   let profiles = [];
+  let refreshTasks = [];
+  let activeTabInfo = null;
   let uiRunning = false;
   const NO_PROFILE_SELECTED = -1;
   let lastSelectedProfileIndex = NO_PROFILE_SELECTED;
@@ -98,6 +108,23 @@ document.addEventListener('DOMContentLoaded', () => {
       footerVersionEl.textContent = t('footer_version', [version]);
     }
   }
+  function applyDarkMode(enabled) {
+    document.body.classList.toggle('dark', Boolean(enabled));
+    if (darkModeToggleBtn) {
+      darkModeToggleBtn.textContent = enabled ? '☀' : '☾';
+    }
+  }
+
+  storageArea.get(['darkMode'], (data) => {
+    applyDarkMode(Boolean(data.darkMode));
+  });
+
+  darkModeToggleBtn?.addEventListener('click', async () => {
+    const enabled = !document.body.classList.contains('dark');
+    applyDarkMode(enabled);
+    await storageArea.set({ darkMode: enabled });
+  });
+
   if (openInWindowBtn) {
     if (isStandalone) {
       openInWindowBtn.style.display = 'none';
@@ -138,8 +165,11 @@ document.addEventListener('DOMContentLoaded', () => {
       useDedicatedWindow: Boolean(src.useDedicatedWindow),
       shuffle: Boolean(src.shuffle),
       excludeDomains: typeof src.excludeDomains === 'string' ? src.excludeDomains : '',
+      noRefreshDomains: typeof src.noRefreshDomains === 'string' ? src.noRefreshDomains : '',
       badgeCountdown: src.badgeCountdown !== undefined ? Boolean(src.badgeCountdown) : true,
-      allowRotationWhilePopupOpen: Boolean(src.allowRotationWhilePopupOpen)
+      allowRotationWhilePopupOpen: Boolean(src.allowRotationWhilePopupOpen),
+      pausePolicy: ['never', 'active', 'idle'].includes(src.pausePolicy) ? src.pausePolicy : 'never',
+      refreshTasks: Array.isArray(src.refreshTasks) ? src.refreshTasks : []
     };
   };
 
@@ -358,6 +388,123 @@ document.addEventListener('DOMContentLoaded', () => {
       .filter((item) => item.url);
   }
 
+  function renderRefreshTasks() {
+    refreshTasksContainer.innerHTML = '';
+    if (!refreshTasks.length) {
+      const empty = document.createElement('div');
+      empty.className = 'task-item';
+      empty.textContent = t('status_refresh_empty');
+      refreshTasksContainer.appendChild(empty);
+      return;
+    }
+
+    refreshTasks.forEach((task) => {
+      const row = document.createElement('div');
+      row.className = 'task-item';
+      const text = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = task.name || task.url;
+      const url = document.createElement('div');
+      url.className = 'task-url';
+      url.textContent = t('task_details', [task.url, task.intervalSec]);
+      text.append(title, url);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'secondary small';
+      remove.textContent = t('entry_delete');
+      remove.addEventListener('click', async () => {
+        refreshTasks = refreshTasks.filter((item) => item.id !== task.id);
+        await persistRefreshTasks();
+      });
+      row.append(text, remove);
+      refreshTasksContainer.appendChild(row);
+    });
+  }
+
+  function sendRefreshTasksToBackground() {
+    chrome.runtime.sendMessage(
+      {
+        type: 'REFRESH_TASKS_SET',
+        refreshTasks,
+        noRefreshDomains: noRefreshDomainsInput.value
+      },
+      () => {}
+    );
+  }
+
+  async function persistRefreshTasks() {
+    await storageArea.set({ refreshTasks });
+    renderRefreshTasks();
+    sendRefreshTasksToBackground();
+  }
+
+  function loadActiveTab() {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs?.[0];
+      activeTabInfo = tab?.url ? { url: tab.url, title: tab.title || tab.url } : null;
+      activeTabUrlEl.textContent = activeTabInfo?.url || t('status_refresh_no_tab');
+    });
+  }
+
+  function normalizeTaskUrl(url) {
+    const value = typeof url === 'string' ? url.trim() : '';
+    if (!value) {
+      return '';
+    }
+    try {
+      return new URL(value).href;
+    } catch (e) {
+      return value;
+    }
+  }
+
+  function taskIdForUrl(url) {
+    const normalized = normalizeTaskUrl(url);
+    let hash = 0;
+    for (let i = 0; i < normalized.length; i += 1) {
+      hash = ((hash << 5) - hash + normalized.charCodeAt(i)) | 0;
+    }
+    return `refresh-${Math.abs(hash).toString(36)}`;
+  }
+
+  startRefreshCurrentBtn.addEventListener('click', async () => {
+    const rawIntervalSec = Number(refreshIntervalInput.value);
+    if (!Number.isFinite(rawIntervalSec) || rawIntervalSec < 1) {
+      setStatus(t('status_interval_invalid'), 'error');
+      return;
+    }
+    if (!activeTabInfo?.url) {
+      setStatus(t('status_refresh_no_tab'), 'error');
+      return;
+    }
+    const normalizedUrl = normalizeTaskUrl(activeTabInfo.url);
+    const existing = refreshTasks.findIndex((task) => normalizeTaskUrl(task.url) === normalizedUrl);
+    const task = {
+      id: existing >= 0 ? refreshTasks[existing].id : taskIdForUrl(normalizedUrl),
+      url: normalizedUrl,
+      name: activeTabInfo.title,
+      intervalSec: rawIntervalSec,
+      enabled: true
+    };
+    if (existing >= 0) {
+      refreshTasks[existing] = task;
+    } else {
+      refreshTasks.push(task);
+    }
+    await persistRefreshTasks();
+    setStatus(t('status_refresh_saved'), 'ok');
+  });
+
+  resetRefreshTasksBtn.addEventListener('click', async () => {
+    refreshTasks = [];
+    await storageArea.set({ refreshTasks });
+    renderRefreshTasks();
+    chrome.runtime.sendMessage({ type: 'REFRESH_TASKS_RESET' }, () => {});
+    setStatus(t('status_refresh_reset'), 'ok');
+  });
+
+  loadActiveTab();
+
   entriesContainer.addEventListener('input', () => schedulePersist(parseProfileIndex(profileSelect.value)));
   entriesContainer.addEventListener('change', () => schedulePersist(parseProfileIndex(profileSelect.value)));
 
@@ -381,10 +528,12 @@ document.addEventListener('DOMContentLoaded', () => {
     useCustomListCheckbox,
     openCustomTabsCheckbox,
     useDedicatedWindowCheckbox,
+    pausePolicySelect,
     orderModeSelect,
     badgeCountdownCheckbox,
     allowRotationWhilePopupOpenCheckbox,
     excludeDomainsInput,
+    noRefreshDomainsInput,
     excludeToggle
   ];
 
@@ -436,14 +585,20 @@ document.addEventListener('DOMContentLoaded', () => {
     openCustomTabsCheckbox.checked = openTabs;
 
     useDedicatedWindowCheckbox.checked = !!cfg.useDedicatedWindow;
+    pausePolicySelect.value = ['never', 'active', 'idle'].includes(cfg.pausePolicy)
+      ? cfg.pausePolicy
+      : 'never';
     orderModeSelect.value = cfg.shuffle ? 'shuffle' : 'sequential';
     badgeCountdownCheckbox.checked = cfg.badgeCountdown !== undefined ? !!cfg.badgeCountdown : true;
     if (allowRotationWhilePopupOpenCheckbox) {
       allowRotationWhilePopupOpenCheckbox.checked = !!cfg.allowRotationWhilePopupOpen;
     }
     excludeDomainsInput.value = cfg.excludeDomains || '';
+    noRefreshDomainsInput.value = cfg.noRefreshDomains || '';
     excludeToggle.checked = (cfg.excludeDomains || '').length > 0;
     toggleExcludeControls();
+    refreshTasks = Array.isArray(cfg.refreshTasks) ? cfg.refreshTasks : refreshTasks;
+    renderRefreshTasks();
     fillEntries(cfg.customEntries || []);
     toggleCustomControls();
     if (!silent) {
@@ -464,14 +619,19 @@ document.addEventListener('DOMContentLoaded', () => {
       'useDedicatedWindow',
       'shuffle',
       'excludeDomains',
+      'noRefreshDomains',
       'allowRotationWhilePopupOpen',
+      'pausePolicy',
       'badgeCountdown',
+      'refreshTasks',
       'profiles',
       'selectedProfileIndex',
       'defaultConfig'
     ],
     (data) => {
       profiles = Array.isArray(data.profiles) ? data.profiles : [];
+      refreshTasks = Array.isArray(data.refreshTasks) ? data.refreshTasks : [];
+      renderRefreshTasks();
       renderProfiles();
 
       const storedProfileIndex = Number.isInteger(data.selectedProfileIndex)
@@ -518,8 +678,11 @@ document.addEventListener('DOMContentLoaded', () => {
       useDedicatedWindow: useDedicatedWindowCheckbox.checked,
       shuffle: orderModeSelect.value === 'shuffle',
       excludeDomains: excludeEnabled ? excludeDomainsInput.value : '',
+      noRefreshDomains: noRefreshDomainsInput.value,
       badgeCountdown: badgeCountdownCheckbox.checked,
-      allowRotationWhilePopupOpen: allowRotationWhilePopupOpenCheckbox?.checked || false
+      allowRotationWhilePopupOpen: allowRotationWhilePopupOpenCheckbox?.checked || false,
+      pausePolicy: pausePolicySelect.value,
+      refreshTasks
     };
   }
 
@@ -536,6 +699,9 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (selectedIdx >= 0 && selectedIdx < profiles.length) {
         storageArea.set({ selectedProfileIndex: selectedIdx }).catch(() => {});
         lastSelectedProfileIndex = selectedIdx;
+      }
+      if (refreshTasks.length) {
+        sendRefreshTasksToBackground();
       }
     }, 150);
   }
@@ -764,13 +930,32 @@ document.addEventListener('DOMContentLoaded', () => {
       useDedicatedWindow: Boolean(raw.useDedicatedWindow),
       shuffle: Boolean(raw.shuffle),
       excludeDomains: safeStr(raw.excludeDomains),
+      noRefreshDomains: safeStr(raw.noRefreshDomains),
       badgeCountdown: raw.badgeCountdown !== undefined ? Boolean(raw.badgeCountdown) : true,
       allowRotationWhilePopupOpen: Boolean(raw.allowRotationWhilePopupOpen),
-      customRawText: safeStr(raw.customRawText)
+      customRawText: safeStr(raw.customRawText),
+      pausePolicy: ['never', 'active', 'idle'].includes(raw.pausePolicy) ? raw.pausePolicy : 'never'
     };
     const rawEntries = Array.isArray(raw.customEntries) ? raw.customEntries : [];
     const capped = rawEntries.slice(0, IMPORT_MAX_ENTRIES_PER_PROFILE);
     cfg.customEntries = capped.map(sanitizeEntry).filter(Boolean);
+    const rawTasks = Array.isArray(raw.refreshTasks) ? raw.refreshTasks : [];
+    cfg.refreshTasks = rawTasks
+      .slice(0, IMPORT_MAX_ENTRIES_PER_PROFILE)
+      .map((task) => {
+        if (!task || typeof task !== 'object') return null;
+        const interval = Number(task.intervalSec);
+        const url = safeStr(task.url).trim();
+        if (!url || !Number.isFinite(interval) || interval < 1) return null;
+        return {
+          id: safeStr(task.id, IMPORT_MAX_NAME_LEN).trim() || `imported-${Date.now()}`,
+          url,
+          name: safeStr(task.name, IMPORT_MAX_NAME_LEN).trim(),
+          intervalSec: interval,
+          enabled: task.enabled !== false
+        };
+      })
+      .filter(Boolean);
     return cfg;
   }
 

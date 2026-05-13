@@ -19,6 +19,20 @@
       --shadow: 0 10px 28px rgba(76, 103, 186, 0.18);
     }
 
+    body.dark {
+      --bg: #0f172a;
+      --panel: #111827;
+      --border: #334155;
+      --accent: #60a5fa;
+      --accent-strong: #3b82f6;
+      --accent-soft: #1e293b;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --error: #f87171;
+      --ok: #34d399;
+      --shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+    }
+
     * { box-sizing: border-box; }
 
     body {
@@ -74,6 +88,14 @@
     }
 
     input[type="checkbox"] { margin-right: 8px; accent-color: var(--accent); transform: scale(1.05); }
+    body.dark input,
+    body.dark select,
+    body.dark .entry input[type="text"],
+    body.dark .row input[type="text"] {
+      background: #0f172a;
+      color: var(--text);
+      border-color: var(--border);
+    }
 
     .actions { display: flex; gap: 10px; margin-top: 12px; }
 
@@ -444,6 +466,34 @@
       color: var(--text);
     }
 
+    .task-list {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 120px;
+      overflow: auto;
+    }
+
+    .task-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--accent-soft);
+      font-size: 12px;
+    }
+
+    .task-item .task-url {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+    }
+
     .btn-icon svg,
     .icon-btn svg {
       width: 18px;
@@ -477,6 +527,7 @@
   <div class="sticky-header">
     <div class="sticky-top">
       <div id="status"></div>
+      <button id="darkModeToggle" class="icon-btn" data-i18n="title_dark_mode" data-i18n-attr="title,aria-label">☾</button>
       <button id="openInWindow" class="icon-btn" data-i18n="title_open_in_window" data-i18n-attr="title,aria-label">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path stroke-dasharray="48" stroke-dashoffset="48" d="M11 5h-6v14h14v-6"><animate fill="freeze" attributeName="stroke-dashoffset" dur="0.6s" values="48;0"/></path><path stroke-dasharray="12" stroke-dashoffset="12" d="M13 11l7 -7"><animate fill="freeze" attributeName="stroke-dashoffset" begin="0.6s" dur="0.2s" values="12;0"/></path><path stroke-dasharray="8" stroke-dashoffset="8" d="M21 3h-6M21 3v6"><animate fill="freeze" attributeName="stroke-dashoffset" begin="0.8s" dur="0.2s" values="8;0"/></path></g></svg>
       </button>
@@ -508,6 +559,14 @@
     <label>
       <span class="title" data-i18n="label_autostart"></span>
       <input id="autoStart" type="checkbox" />
+    </label>
+    <label>
+      <span class="title" data-i18n="label_pause_policy"></span>
+      <select id="pausePolicy">
+        <option value="never" data-i18n="option_pause_never"></option>
+        <option value="active" data-i18n="option_pause_active"></option>
+        <option value="idle" data-i18n="option_pause_idle"></option>
+      </select>
     </label>
   </div>
 
@@ -576,6 +635,10 @@
       </label>
     </div>
     <input id="excludeDomains" type="text" placeholder="" data-i18n="placeholder_exclude" data-i18n-attr="placeholder" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border);" />
+    <div class="row" style="margin-top:10px; margin-bottom:8px; align-items:center;">
+      <strong class="pill" data-i18n="pill_no_refresh"></strong>
+    </div>
+    <input id="noRefreshDomains" type="text" placeholder="" data-i18n="placeholder_no_refresh" data-i18n-attr="placeholder" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border);" />
   </div>
 
   <div class="card">
@@ -597,6 +660,23 @@
         <input id="allowRotationWhilePopupOpen" type="checkbox" />
       </label>
     </div>
+  </div>
+
+  <div class="card">
+    <strong class="pill" data-i18n="pill_auto_refresh"></strong>
+    <div class="row" style="margin-top:8px;">
+      <span class="title" data-i18n="label_refresh_interval"></span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input id="refreshInterval" type="number" min="1" step="1" value="120" />
+        <span class="suffix" data-i18n="suffix_seconds"></span>
+      </div>
+    </div>
+    <div id="activeTabUrl" class="task-url" style="font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+    <div class="actions">
+      <button id="startRefreshCurrent" class="secondary small" data-i18n="button_refresh_current"></button>
+      <button id="resetRefreshTasks" class="secondary small" data-i18n="button_refresh_reset"></button>
+    </div>
+    <div id="refreshTasks" class="task-list"></div>
   </div>
 
   <a class="footer" href="https://github.com/Sherzod-Norkulov" target="_blank" rel="noopener">
