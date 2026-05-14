@@ -11,6 +11,8 @@ let wasRunningBeforePopup = false;
 let pausedSettingsSnapshot = null;
 let ensuredWindowId = null;
 let badgeTimer = null;
+let pauseReason = null;
+const refreshTaskTimers = new Map();
 const iconOn = {
   "16": "assets/icons/icon-on-icon16.png",
   "48": "assets/icons/icon-on-icon48.png",
@@ -22,6 +24,9 @@ const iconOff = {
   "128": "assets/icons/icon-off-icon128.png"
 };
 const storageArea = chrome.storage.local;
+const IDLE_DETECTION_THRESHOLD_SEC = 60;
+const PAUSE_CHECK_INTERVAL_MS = 1000;
+const PAUSE_BADGE_TEXT = '⏸';
 // In MV3 service workers, chrome.runtime.getManifest() is available synchronously.
 // Keep a defensive fallback ('0.0.0') only for unexpected early execution; we no
 // longer hard-code a second copy of the release version here — that was a source
@@ -96,13 +101,16 @@ const defaultSettings = {
   useCustomList: false,
   customEntries: [],
   openCustomTabs: true,
-  enableRefreshFlags: false,
+  enableRefreshFlags: true,
   customRawText: '',
   useDedicatedWindow: false,
   shuffle: false,
   excludeDomains: '',
+  noRefreshDomains: '',
   badgeCountdown: true,
-  allowRotationWhilePopupOpen: false
+  allowRotationWhilePopupOpen: false,
+  pausePolicy: 'never',
+  refreshTasks: []
 };
 
 let currentSettings = { ...defaultSettings };
@@ -227,6 +235,126 @@ function isExcluded(tabUrl, excludeList) {
   } catch (e) {
     return false;
   }
+}
+
+function isRefreshExcluded(tabUrl) {
+  return isExcluded(tabUrl, parseExcludedDomains(currentSettings.noRefreshDomains));
+}
+
+function normalizePausePolicy(value) {
+  return ['never', 'active', 'idle'].includes(value) ? value : 'never';
+}
+
+function generateRefreshTaskId() {
+  if (globalThis.crypto?.randomUUID) {
+    return `refresh-${globalThis.crypto.randomUUID()}`;
+  }
+  return `refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function normalizeRefreshTasks(tasks) {
+  if (!Array.isArray(tasks)) {
+    return [];
+  }
+
+  const seen = new Set();
+  return tasks
+    .map((task) => {
+      const url = normalizedMatchUrl(typeof task?.url === 'string' ? task.url : '');
+      const intervalRaw = Number(task?.intervalSec);
+      const intervalSec = Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : null;
+      if (!url || !intervalSec) {
+        return null;
+      }
+      const key = `${url}|${intervalSec}`;
+      if (seen.has(key)) {
+        return null;
+      }
+      seen.add(key);
+      return {
+        id: typeof task?.id === 'string' && task.id ? task.id : generateRefreshTaskId(),
+        url,
+        name: typeof task?.name === 'string' ? task.name.trim() : '',
+        intervalSec,
+        enabled: task?.enabled !== false
+      };
+    })
+    .filter(Boolean);
+}
+
+function clearRefreshTaskTimers() {
+  for (const timer of refreshTaskTimers.values()) {
+    clearTimeout(timer);
+  }
+  refreshTaskTimers.clear();
+}
+
+async function runRefreshTask(taskId) {
+  const task = currentSettings.refreshTasks.find((item) => item.id === taskId && item.enabled);
+  if (!task) {
+    refreshTaskTimers.delete(taskId);
+    return;
+  }
+
+  try {
+    if (!isRefreshExcluded(task.url)) {
+      const tabs = await chrome.tabs.query({});
+      const tab = tabs.find((candidate) => {
+        const candidateUrls = [];
+        if (typeof candidate.pendingUrl === 'string') candidateUrls.push(candidate.pendingUrl);
+        if (typeof candidate.url === 'string') candidateUrls.push(candidate.url);
+        return candidateUrls.some((url) => tabMatches(url, task.url));
+      });
+      if (tab?.id) {
+        await chrome.tabs.reload(tab.id);
+      }
+    }
+  } catch (error) {
+    console.error('Auto-refresh task failed:', error);
+  } finally {
+    scheduleRefreshTask(task);
+  }
+}
+
+function scheduleRefreshTask(task) {
+  if (!task?.id || task.enabled === false) {
+    return;
+  }
+  if (refreshTaskTimers.has(task.id)) {
+    clearTimeout(refreshTaskTimers.get(task.id));
+  }
+  const timer = setTimeout(() => {
+    runRefreshTask(task.id).catch((err) => console.error('runRefreshTask error', err));
+  }, task.intervalSec * 1000);
+  refreshTaskTimers.set(task.id, timer);
+}
+
+function scheduleRefreshTasks() {
+  clearRefreshTaskTimers();
+  currentSettings.refreshTasks = normalizeRefreshTasks(currentSettings.refreshTasks);
+  for (const task of currentSettings.refreshTasks) {
+    scheduleRefreshTask(task);
+  }
+}
+
+async function getRotationPauseReason() {
+  const policy = normalizePausePolicy(currentSettings.pausePolicy);
+  if (policy === 'never' || !chrome.idle?.queryState) {
+    return null;
+  }
+
+  try {
+    const state = await chrome.idle.queryState(IDLE_DETECTION_THRESHOLD_SEC);
+    if (policy === 'active' && state === 'active') {
+      return 'active';
+    }
+    if (policy === 'idle' && (state === 'idle' || state === 'locked')) {
+      return 'idle';
+    }
+  } catch (error) {
+    console.error('Could not read idle state:', error);
+  }
+  return null;
 }
 
 async function prepareCustomTargets(entries, openMissing) {
@@ -386,6 +514,12 @@ async function rotateTabs() {
   let nextDelayMs = intervalMs;
 
   try {
+    pauseReason = await getRotationPauseReason();
+    if (pauseReason) {
+      nextDelayMs = PAUSE_CHECK_INTERVAL_MS;
+      return;
+    }
+
     if (currentSettings.useDedicatedWindow && currentSettings.useCustomList) {
       const { id, created } = await ensureDedicatedWindow(currentSettings.customEntries);
       ensuredWindowId = id;
@@ -471,7 +605,8 @@ async function rotateTabs() {
 
     await chrome.tabs.update(next.tab.id, { active: true });
 
-    if (currentSettings.enableRefreshFlags && next.refresh) {
+    const nextTabUrl = typeof next.tab.pendingUrl === 'string' ? next.tab.pendingUrl : next.tab.url;
+    if (currentSettings.enableRefreshFlags && next.refresh && !isRefreshExcluded(nextTabUrl)) {
       const delay = Number(next.refreshDelaySec) || 0;
       if (delay > 0) {
         await new Promise((resolve) => setTimeout(resolve, delay * 1000));
@@ -506,6 +641,7 @@ async function stopRotator(saveState = true) {
 
   isRunning = false;
   rotationTargets = [];
+  pauseReason = null;
   chrome.action.setBadgeText({ text: '' }).catch(() => {});
   chrome.action.setIcon({ path: iconOff }).catch(() => {});
 
@@ -544,6 +680,11 @@ async function startRotator(options = {}) {
   normalized.excludeDomains = typeof normalized.excludeDomains === 'string'
     ? normalized.excludeDomains
     : currentSettings.excludeDomains || '';
+  normalized.noRefreshDomains = typeof normalized.noRefreshDomains === 'string'
+    ? normalized.noRefreshDomains
+    : currentSettings.noRefreshDomains || '';
+  normalized.pausePolicy = normalizePausePolicy(normalized.pausePolicy);
+  normalized.refreshTasks = normalizeRefreshTasks(normalized.refreshTasks || currentSettings.refreshTasks);
   normalized.badgeCountdown = Boolean(
     normalized.badgeCountdown === undefined ? currentSettings.badgeCountdown : normalized.badgeCountdown
   );
@@ -566,6 +707,8 @@ async function startRotator(options = {}) {
 
   currentSettings = normalized;
   intervalMs = normalized.intervalSec * 1000;
+  pauseReason = null;
+  scheduleRefreshTasks();
 
   if (currentSettings.useDedicatedWindow && currentSettings.useCustomList) {
     const { id } = await ensureDedicatedWindow(currentSettings.customEntries);
@@ -604,19 +747,24 @@ function scheduleNextTick(delayMs) {
     badgeTimer = null;
   }
   if (currentSettings.badgeCountdown) {
-    const endTime = Date.now() + safeDelay;
-    chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' }).catch(() => {});
-    const tick = () => {
-      const remaining = Math.max(0, endTime - Date.now());
-      const sec = Math.max(0, Math.ceil(remaining / 1000));
-      chrome.action.setBadgeText({ text: sec === 0 ? '' : `${sec}` }).catch(() => {});
-      if (sec === 0 && badgeTimer !== null) {
-        clearInterval(badgeTimer);
-        badgeTimer = null;
-      }
-    };
-    tick();
-    badgeTimer = setInterval(tick, 500);
+    if (pauseReason) {
+      chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' }).catch(() => {});
+      chrome.action.setBadgeText({ text: PAUSE_BADGE_TEXT }).catch(() => {});
+    } else {
+      const endTime = Date.now() + safeDelay;
+      chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' }).catch(() => {});
+      const tick = () => {
+        const remaining = Math.max(0, endTime - Date.now());
+        const sec = Math.max(0, Math.ceil(remaining / 1000));
+        chrome.action.setBadgeText({ text: sec === 0 ? '' : `${sec}` }).catch(() => {});
+        if (sec === 0 && badgeTimer !== null) {
+          clearInterval(badgeTimer);
+          badgeTimer = null;
+        }
+      };
+      tick();
+      badgeTimer = setInterval(tick, 500);
+    }
   } else {
     chrome.action.setBadgeText({ text: '' }).catch(() => {});
   }
@@ -649,8 +797,11 @@ async function restoreFromStorage() {
       'configBackup',
       'shuffle',
       'excludeDomains',
+      'noRefreshDomains',
       'badgeCountdown',
       'allowRotationWhilePopupOpen',
+      'pausePolicy',
+      'refreshTasks',
       'activeConfig'
     ]);
 
@@ -678,13 +829,23 @@ async function restoreFromStorage() {
       useDedicatedWindow: Boolean(source.useDedicatedWindow),
       shuffle: Boolean(source.shuffle),
       excludeDomains: typeof source.excludeDomains === 'string' ? source.excludeDomains : '',
+      noRefreshDomains: typeof source.noRefreshDomains === 'string'
+        ? source.noRefreshDomains
+        : typeof data.noRefreshDomains === 'string'
+          ? data.noRefreshDomains
+          : '',
       badgeCountdown: source.badgeCountdown !== undefined ? Boolean(source.badgeCountdown) : true,
       allowRotationWhilePopupOpen: source.allowRotationWhilePopupOpen !== undefined
         ? Boolean(source.allowRotationWhilePopupOpen)
-        : false
+        : false,
+      pausePolicy: normalizePausePolicy(source.pausePolicy),
+      refreshTasks: normalizeRefreshTasks(
+        Array.isArray(source.refreshTasks) ? source.refreshTasks : data.refreshTasks
+      )
     };
 
     ensuredWindowId = source.ensuredWindowId || source.targetWindowId || null;
+    scheduleRefreshTasks();
 
     if (
       (!popupOpen || currentSettings.allowRotationWhilePopupOpen) &&
@@ -720,8 +881,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           useDedicatedWindow,
           shuffle,
           excludeDomains,
+          noRefreshDomains,
           badgeCountdown,
-          allowRotationWhilePopupOpen
+          allowRotationWhilePopupOpen,
+          pausePolicy,
+          refreshTasks
         } = message;
 
         if (!Number.isFinite(Number(intervalSec)) || Number(intervalSec) < 1) {
@@ -744,8 +908,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           useDedicatedWindow,
           shuffle,
           excludeDomains,
+          noRefreshDomains,
           badgeCountdown,
-          allowRotationWhilePopupOpen
+          allowRotationWhilePopupOpen,
+          pausePolicy,
+          refreshTasks
         };
 
         // explicit start overrides any paused snapshot
@@ -775,6 +942,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } finally {
         explicitCommandInProgress = false;
       }
+    } else if (message.type === 'REFRESH_TASKS_SET') {
+      currentSettings.noRefreshDomains = typeof message.noRefreshDomains === 'string'
+        ? message.noRefreshDomains
+        : currentSettings.noRefreshDomains;
+      currentSettings.refreshTasks = normalizeRefreshTasks(message.refreshTasks);
+      await storageArea.set({
+        noRefreshDomains: currentSettings.noRefreshDomains,
+        refreshTasks: currentSettings.refreshTasks,
+        configBackup: {
+          version: manifestVersion,
+          savedAt: Date.now(),
+          settings: { ...currentSettings, isRunning, ensuredWindowId }
+        }
+      });
+      scheduleRefreshTasks();
+      sendResponse({ ok: true, refreshTasks: currentSettings.refreshTasks });
+    } else if (message.type === 'REFRESH_TASKS_RESET') {
+      currentSettings.refreshTasks = [];
+      clearRefreshTaskTimers();
+      await storageArea.set({ refreshTasks: [] });
+      sendResponse({ ok: true });
     } else {
       sendResponse({ ok: false, error: 'UNKNOWN_COMMAND' });
     }
