@@ -578,7 +578,7 @@ async function rotateTabs() {
       return;
     }
 
-    if (candidates.length < 2) {
+    if (!currentSettings.useCustomList && candidates.length < 2) {
       candidates = tabs
         .filter((t) => !isExcluded(typeof t.pendingUrl === 'string' ? t.pendingUrl : t.url, excluded))
         .map((t) => ({ tab: t, refresh: false, intervalSec: null }));

@@ -135,7 +135,12 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   darkModeToggleBtn?.addEventListener('click', async () => {
-    const nextMode = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'auto' : 'light';
+    let nextMode = 'light';
+    if (themeMode === 'light') {
+      nextMode = 'dark';
+    } else if (themeMode === 'dark') {
+      nextMode = 'auto';
+    }
     applyThemeMode(nextMode);
     await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' });
   });
@@ -740,7 +745,7 @@ document.addEventListener('DOMContentLoaded', () => {
               baseConfig.customEntries = openEntries;
               baseConfig.useCustomList = true;
               defaultConfigCache = { ...baseConfig };
-              await storageArea.set({ defaultConfig: { ...baseConfig } });
+              await storageArea.set({ defaultConfig: defaultConfigCache });
             }
           }
           applyConfig(baseConfig, true);
