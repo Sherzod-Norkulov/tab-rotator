@@ -140,9 +140,11 @@ document.addEventListener('DOMContentLoaded', () => {
     return 'auto';
   }
 
+  /**
+   * Deep-clones JSON-serializable extension config objects.
+   * Uses structuredClone when available and a JSON fallback for storage payloads.
+   */
   function deepClone(value) {
-    // Extension configs are intentionally JSON-serializable storage payloads.
-    // The fallback is safe for this data model and avoids adding dependencies.
     return typeof structuredClone === 'function'
       ? structuredClone(value)
       : JSON.parse(JSON.stringify(value));
@@ -511,6 +513,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  /**
+   * Converts a Chrome tab into a custom-list entry.
+   * Returns null for internal/browser URLs that the extension should not manage.
+   */
   function entryFromTab(tab) {
     const url = tab?.pendingUrl || tab?.url || '';
     if (!isManageableUrl(url)) return null;
@@ -524,6 +530,10 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  /**
+   * Validates manageable URLs for rotation/refresh (http, https, file).
+   * Partial hostnames are tested with an https:// prefix to match URL entry UX.
+   */
   function isManageableUrl(candidate) {
     if (!candidate) {
       return false;
@@ -541,6 +551,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  /**
+   * Counts entries that are both enabled for rotation and use manageable URLs.
+   */
   function countRotatableEntries(entries) {
     return (Array.isArray(entries) ? entries : []).filter(
       (entry) => shouldRotateEntry(entry) && isManageableUrl(typeof entry === 'string' ? entry : entry.url)

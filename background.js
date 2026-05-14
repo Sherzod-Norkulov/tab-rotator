@@ -175,6 +175,11 @@ function normalizedMatchUrl(candidate) {
   }
 }
 
+/**
+ * Returns true when a user-provided or tab URL can be safely managed by the
+ * extension. Internal browser pages and extension pages are intentionally
+ * filtered out before rotation, auto-open, and auto-refresh operations.
+ */
 function isManageableUrl(candidate) {
   if (!candidate) {
     return false;
@@ -602,7 +607,7 @@ async function rotateTabs() {
         // Respect per-entry rotation toggles: do not fall back to all tabs when
         // the custom list has fewer than two enabled rotation candidates. This
         // stops rotation instead of leaving a false "running" state.
-        // saveState=true persists isRunning=false so popup/storage recover cleanly.
+        // stopRotator(true) persists isRunning=false so popup/storage recover cleanly.
         await stopRotator(true);
         return;
       }
