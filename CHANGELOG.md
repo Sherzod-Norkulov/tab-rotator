@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-05-14
+
 ### Added
 - Команды Chrome shortcuts: Toggle rotation и Stop rotation доступны через
   `chrome://extensions/shortcuts` без дополнительных permissions.
