@@ -63,6 +63,8 @@ no-refresh список, auto-refresh задачи, тему интерфейс�
 host_permissions, content_scripts и declarativeNetRequest. Работа
 ведётся только с метаданными вкладок (id, url, windowId) через API
 chrome.tabs и chrome.windows.
+Системные страницы браузера и страницы расширений пропускаются; ротация и
+auto-refresh рассчитаны на поддерживаемые `http:`, `https:` и `file:` URL.
 ```
 
 ### Remote code

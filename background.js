@@ -27,6 +27,9 @@ const storageArea = chrome.storage.local;
 const IDLE_DETECTION_THRESHOLD_SEC = 60;
 const PAUSE_CHECK_INTERVAL_MS = 1000;
 const PAUSE_BADGE_TEXT = '⏸';
+const MANAGEABLE_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+const COMMAND_TOGGLE_ROTATION = 'toggle-rotation';
+const COMMAND_STOP_ROTATION = 'stop-rotation';
 // In MV3 service workers, chrome.runtime.getManifest() is available synchronously.
 // Keep a defensive fallback ('0.0.0') only for unexpected early execution; we no
 // longer hard-code a second copy of the release version here — that was a source
@@ -53,7 +56,7 @@ async function ensureDedicatedWindow(entries) {
     }
   }
 
-  const normalized = normalizeEntries(entries);
+  const normalized = normalizeEntries(entries).filter((entry) => entry.rotate !== false && isManageableUrl(entry.url));
   // Guard: never create an empty `about:blank` dedicated window when the list is empty.
   // Without this, enabling "Open list in a dedicated window" with no URLs would spawn a
   // blank monitoring window the user never asked for.
@@ -126,16 +129,17 @@ function normalizeEntries(entries) {
   for (const entry of entries) {
     let normalizedEntry;
     if (typeof entry === 'string') {
-      normalizedEntry = { url: entry.trim(), name: '', refresh: false, intervalSec: null, refreshDelaySec: 0 };
+      normalizedEntry = { url: entry.trim(), name: '', rotate: true, refresh: false, intervalSec: null, refreshDelaySec: 0 };
     } else {
       const url = typeof entry?.url === 'string' ? entry.url.trim() : '';
       const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+      const rotate = entry?.rotate !== false;
       const refresh = Boolean(entry?.refresh);
       const intervalRaw = Number(entry?.intervalSec);
       const intervalSec = Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : null;
       const refreshDelayRaw = Number(entry?.refreshDelaySec);
       const refreshDelaySec = Number.isFinite(refreshDelayRaw) && refreshDelayRaw >= 0 ? refreshDelayRaw : 0;
-      normalizedEntry = { url, name, refresh, intervalSec, refreshDelaySec };
+      normalizedEntry = { url, name, rotate, refresh, intervalSec, refreshDelaySec };
     }
 
     if (!normalizedEntry.url.length) continue;
@@ -168,6 +172,22 @@ function normalizedMatchUrl(candidate) {
     return new URL(`https://${url}`).href;
   } catch (e) {
     return `https://${url}`;
+  }
+}
+
+/**
+ * Returns true when a user-provided or tab URL can be safely managed by the
+ * extension. Internal browser pages and extension pages are intentionally
+ * filtered out before rotation, auto-open, and auto-refresh operations.
+ */
+function isManageableUrl(candidate) {
+  if (!candidate) {
+    return false;
+  }
+  try {
+    return MANAGEABLE_PROTOCOLS.has(new URL(normalizedMatchUrl(candidate)).protocol);
+  } catch (error) {
+    return false;
   }
 }
 
@@ -297,13 +317,13 @@ async function runRefreshTask(taskId) {
   }
 
   try {
-    if (!isRefreshExcluded(task.url)) {
+    if (isManageableUrl(task.url) && !isRefreshExcluded(task.url)) {
       const tabs = await chrome.tabs.query({});
       const tab = tabs.find((candidate) => {
         const candidateUrls = [];
         if (typeof candidate.pendingUrl === 'string') candidateUrls.push(candidate.pendingUrl);
         if (typeof candidate.url === 'string') candidateUrls.push(candidate.url);
-        return candidateUrls.some((url) => tabMatches(url, task.url));
+        return candidateUrls.some((url) => isManageableUrl(url) && tabMatches(url, task.url));
       });
       if (tab?.id) {
         await chrome.tabs.reload(tab.id);
@@ -358,7 +378,7 @@ async function getRotationPauseReason() {
 }
 
 async function prepareCustomTargets(entries, openMissing) {
-  const normalized = normalizeEntries(entries);
+  const normalized = normalizeEntries(entries).filter((entry) => entry.rotate !== false && isManageableUrl(entry.url));
 
   if (!normalized.length) {
     return [];
@@ -381,12 +401,12 @@ async function prepareCustomTargets(entries, openMissing) {
       if (typeof t.pendingUrl === 'string') candidateUrls.push(t.pendingUrl);
       if (typeof t.url === 'string') candidateUrls.push(t.url);
       return (
-        candidateUrls.some((u) => tabMatches(u, normalizedUrl)) &&
+        candidateUrls.some((u) => isManageableUrl(u) && tabMatches(u, normalizedUrl)) &&
         !usedIds.has(t.id)
       );
     });
 
-    if (!tab && openMissing) {
+    if (!tab && openMissing && isManageableUrl(normalizedUrl)) {
       const createOptions = { url: normalizedUrl, active: false };
       if (currentSettings.useDedicatedWindow && ensuredWindowId) {
         createOptions.windowId = ensuredWindowId;
@@ -432,6 +452,12 @@ function persistState(extra = {}) {
   });
 }
 
+async function failStartNotEnoughTargets() {
+  chrome.action.setIcon({ path: iconOff }).catch(() => {});
+  await persistState({ isRunning: false });
+  return { ok: false, error: 'NOT_ENOUGH_TARGETS' };
+}
+
 function buildCandidatesFromCustomEntries(tabs) {
   if (!currentSettings.useCustomList || !currentSettings.customEntries.length) {
     return [];
@@ -442,13 +468,20 @@ function buildCandidatesFromCustomEntries(tabs) {
   const candidates = [];
 
   for (const entry of currentSettings.customEntries) {
+    if (entry.rotate === false) {
+      continue;
+    }
+
     const targetUrl = normalizedMatchUrl(entry.url);
+    if (!isManageableUrl(targetUrl)) {
+      continue;
+    }
     const found = tabs.find((t) => {
       const candidateUrls = [];
       if (typeof t.pendingUrl === 'string') candidateUrls.push(t.pendingUrl);
       if (typeof t.url === 'string') candidateUrls.push(t.url);
       return candidateUrls.some(
-        (u) => u && !isExcluded(u, excluded) && tabMatches(u, targetUrl)
+        (u) => u && isManageableUrl(u) && !isExcluded(u, excluded) && tabMatches(u, targetUrl)
       );
     });
 
@@ -471,6 +504,7 @@ function buildCandidatesFromCustomEntries(tabs) {
       if (
         tab &&
         !usedIds.has(tab.id) &&
+        isManageableUrl(typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url) &&
         !isExcluded(
           typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url,
           excluded
@@ -502,6 +536,9 @@ function findEntryForTab(tab) {
         ? tab.url
         : '';
   for (const entry of currentSettings.customEntries) {
+    if (entry.rotate === false || !isManageableUrl(entry.url)) {
+      continue;
+    }
     const targetUrl = normalizedMatchUrl(entry.url);
     if (tabMatches(tabUrl, targetUrl)) {
       return entry;
@@ -566,10 +603,22 @@ async function rotateTabs() {
     const excluded = parseExcludedDomains(currentSettings.excludeDomains);
 
     if (candidates.length < 2) {
+      if (currentSettings.useCustomList) {
+        // Respect per-entry rotation toggles: do not fall back to all tabs when
+        // the custom list has fewer than two enabled rotation candidates. This
+        // stops rotation instead of leaving a false "running" state.
+        // stopRotator(true) persists isRunning=false so popup/storage recover cleanly.
+        await stopRotator(true);
+        return;
+      }
       candidates = tabs
-        .filter((t) => !isExcluded(typeof t.pendingUrl === 'string' ? t.pendingUrl : t.url, excluded))
+        .filter((t) => {
+          const url = typeof t.pendingUrl === 'string' ? t.pendingUrl : t.url;
+          return isManageableUrl(url) && !isExcluded(url, excluded);
+        })
         .map((t) => ({ tab: t, refresh: false, intervalSec: null }));
       if (candidates.length < 2) {
+        await stopRotator(true);
         return;
       }
     }
@@ -697,6 +746,13 @@ async function startRotator(options = {}) {
       : normalized.allowRotationWhilePopupOpen
   );
 
+  if (
+    normalized.useCustomList &&
+    normalized.customEntries.filter((entry) => entry.rotate !== false && isManageableUrl(entry.url)).length < 2
+  ) {
+    return failStartNotEnoughTargets();
+  }
+
   if (!normalized.useCustomList) {
     normalized.openCustomTabs = false;
     normalized.enableRefreshFlags = false;
@@ -722,9 +778,19 @@ async function startRotator(options = {}) {
     : [];
 
   if (normalized.useCustomList && rotationTargets.length < 2) {
-    // если вкладок нет или меньше двух, принудительно создаём недостающие
-    rotationTargets = await prepareCustomTargets(normalized.customEntries, true);
-    normalized.openCustomTabs = true;
+    return failStartNotEnoughTargets();
+  }
+
+  if (!normalized.useCustomList) {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    const excluded = parseExcludedDomains(normalized.excludeDomains);
+    const candidates = (tabs || []).filter((tab) => {
+      const url = typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url;
+      return isManageableUrl(url) && !isExcluded(url, excluded);
+    });
+    if (candidates.length < 2) {
+      return failStartNotEnoughTargets();
+    }
   }
 
   isRunning = true;
@@ -732,6 +798,7 @@ async function startRotator(options = {}) {
   scheduleNextTick(intervalMs);
 
   await persistState({ isRunning: true });
+  return { ok: true };
 }
 
 function scheduleNextTick(delayMs) {
@@ -925,8 +992,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        await startRotator(startOptions);
-        sendResponse({ ok: true });
+        const result = await startRotator(startOptions);
+        sendResponse(result?.ok === false ? result : { ok: true });
       } finally {
         explicitCommandInProgress = false;
       }
@@ -979,6 +1046,31 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 setTimeout(() => restoreFromStorage(), 0);
+
+chrome.commands?.onCommand?.addListener((command) => {
+  if (explicitCommandInProgress) {
+    return;
+  }
+  if (![COMMAND_STOP_ROTATION, COMMAND_TOGGLE_ROTATION].includes(command)) {
+    return;
+  }
+  explicitCommandInProgress = true;
+  (async () => {
+    if (command === COMMAND_STOP_ROTATION) {
+      await stopRotator();
+      return;
+    }
+    if (isRunning) {
+      await stopRotator();
+    } else {
+      await startRotator(currentSettings);
+    }
+  })()
+    .catch((err) => console.error('Command failed:', err))
+    .finally(() => {
+      explicitCommandInProgress = false;
+    });
+});
 
 chrome.runtime.onConnect.addListener((port) => {
   // Two port names are used by popup.js:

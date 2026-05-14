@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status');
   const openInWindowBtn = document.getElementById('openInWindow');
   const darkModeToggleBtn = document.getElementById('darkModeToggle');
+  const loadOpenTabsBtn = document.getElementById('loadOpenTabs');
   const autoStartCheckbox = document.getElementById('autoStart');
   const pausePolicySelect = document.getElementById('pausePolicy');
   const useCustomListCheckbox = document.getElementById('useCustomList');
@@ -23,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const applyProfileBtn = document.getElementById('applyProfile');
   const saveProfileBtn = document.getElementById('saveProfile');
   const saveAsProfileBtn = document.getElementById('saveAsProfile');
+  const duplicateProfileBtn = document.getElementById('duplicateProfile');
   const editProfileBtn = document.getElementById('editProfile');
   const deleteProfileBtn = document.getElementById('deleteProfile');
   const exportProfileBtn = document.getElementById('exportProfile');
@@ -36,6 +38,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const resetRefreshTasksBtn = document.getElementById('resetRefreshTasks');
   const refreshTasksContainer = document.getElementById('refreshTasks');
   const storageArea = chrome.storage.local;
+  const VALID_THEME_MODES = ['light', 'dark', 'auto'];
+  const MANAGEABLE_PROTOCOLS = ['http:', 'https:', 'file:'];
+  const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   let profiles = [];
   let refreshTasks = [];
   let activeTabInfo = null;
@@ -45,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let autoPersistTimer = null;
   let defaultConfigCache = null;
   let isInitializing = true;
+  let themeMode = 'auto';
 
   const t = (key, args = []) => {
     const msg = chrome.i18n?.getMessage ? chrome.i18n.getMessage(key, args) : '';
@@ -108,21 +114,65 @@ document.addEventListener('DOMContentLoaded', () => {
       footerVersionEl.textContent = t('footer_version', [version]);
     }
   }
-  function applyDarkMode(enabled) {
-    document.body.classList.toggle('dark', Boolean(enabled));
+  function applyThemeMode(mode = 'auto') {
+    themeMode = VALID_THEME_MODES.includes(mode) ? mode : 'auto';
+    const prefersDark = systemThemeQuery ? systemThemeQuery.matches : false;
+    const enabled = themeMode === 'dark' || (themeMode === 'auto' && prefersDark);
     if (darkModeToggleBtn) {
-      darkModeToggleBtn.textContent = enabled ? '☀' : '☾';
+      darkModeToggleBtn.textContent = themeMode === 'auto' ? '◐' : enabled ? '☀' : '☾';
+      darkModeToggleBtn.title = t(`theme_${themeMode}`);
+      darkModeToggleBtn.setAttribute('aria-label', t(`theme_${themeMode}`));
     }
+    document.body.classList.toggle('dark', enabled);
+    document.body.dataset.theme = themeMode;
   }
 
-  storageArea.get(['darkMode'], (data) => {
-    applyDarkMode(Boolean(data.darkMode));
+  function resolveStoredThemeMode(data = {}) {
+    if (VALID_THEME_MODES.includes(data.themeMode)) {
+      return data.themeMode;
+    }
+    if (data.darkMode === true) {
+      return 'dark';
+    }
+    if (data.darkMode === false) {
+      return 'light';
+    }
+    return 'auto';
+  }
+
+  /**
+   * Deep-clones JSON-serializable extension config objects.
+   * Uses structuredClone when available and a JSON fallback for storage payloads.
+   */
+  function deepClone(value) {
+    return typeof structuredClone === 'function'
+      ? structuredClone(value)
+      : JSON.parse(JSON.stringify(value));
+  }
+
+  storageArea.get(['darkMode', 'themeMode'], (data) => {
+    applyThemeMode(resolveStoredThemeMode(data));
   });
 
   darkModeToggleBtn?.addEventListener('click', async () => {
-    const enabled = !document.body.classList.contains('dark');
-    applyDarkMode(enabled);
-    await storageArea.set({ darkMode: enabled });
+    let nextMode = 'light';
+    if (themeMode === 'light') {
+      nextMode = 'dark';
+    } else if (themeMode === 'dark') {
+      nextMode = 'auto';
+    }
+    applyThemeMode(nextMode);
+    await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' });
+  });
+
+  const handleSystemThemeChange = () => {
+    if (themeMode === 'auto') {
+      applyThemeMode('auto');
+    }
+  };
+  systemThemeQuery?.addEventListener?.('change', handleSystemThemeChange);
+  window.addEventListener('unload', () => {
+    systemThemeQuery?.removeEventListener?.('change', handleSystemThemeChange);
   });
 
   if (openInWindowBtn) {
@@ -246,6 +296,17 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshDelayInput.classList.add(refreshDelayInput.disabled ? 'field-disabled' : 'field-enabled');
     });
 
+    const rotateCheckbox = document.createElement('input');
+    rotateCheckbox.type = 'checkbox';
+    rotateCheckbox.dataset.role = 'rotate';
+    rotateCheckbox.checked = shouldRotateEntry(entry);
+    rotateCheckbox.style.gridArea = 'ocheck';
+    rotateCheckbox.style.justifySelf = 'end';
+    const rotateLabel = document.createElement('span');
+    rotateLabel.className = 'control-label';
+    rotateLabel.style.gridArea = 'olabel';
+    rotateLabel.textContent = t('entry_rotate');
+
     const timerCheckbox = document.createElement('input');
     timerCheckbox.type = 'checkbox';
     timerCheckbox.dataset.role = 'timer-toggle';
@@ -295,7 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
       schedulePersist(parseProfileIndex(profileSelect.value));
     });
 
-    controls.append(refreshCheckbox, refreshLabel, refreshDelayWrap, timerCheckbox, timerLabel, timerWrap, removeBtn);
+    controls.append(rotateCheckbox, rotateLabel, refreshCheckbox, refreshLabel, refreshDelayWrap, timerCheckbox, timerLabel, timerWrap, removeBtn);
     row.append(order, nameInput, urlInput, controls);
 
     upBtn.addEventListener('click', () => moveRow(row, -1));
@@ -345,6 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
         createEntryRow({
           url: typeof entry === 'string' ? entry : entry.url,
           name: typeof entry === 'object' && entry.name ? entry.name : '',
+          rotate: shouldRotateEntry(entry),
           refresh: typeof entry === 'object' && entry.refresh,
           refreshDelaySec:
             typeof entry === 'object' && Number.isFinite(entry.refreshDelaySec) && entry.refreshDelaySec >= 0
@@ -367,6 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .map((row) => {
         const url = row.querySelector('.entry-url').value.trim();
         let name = row.querySelector('.entry-name').value.trim();
+        const rotate = row.querySelector('input[data-role="rotate"]')?.checked ?? true;
         const refresh = row.querySelector('input[data-role="refresh"]').checked;
         const numberInputs = row.querySelectorAll('input[type="number"]');
         const refreshDelayInput = numberInputs[0];
@@ -383,9 +446,13 @@ document.addEventListener('DOMContentLoaded', () => {
           name = url;
         }
 
-        return { url, name, refresh, refreshDelaySec, intervalSec };
+        return { url, name, rotate, refresh, refreshDelaySec, intervalSec };
       })
       .filter((item) => item.url);
+  }
+
+  function shouldRotateEntry(entry) {
+    return entry && typeof entry === 'object' ? entry.rotate !== false : true;
   }
 
   function renderRefreshTasks() {
@@ -441,9 +508,93 @@ document.addEventListener('DOMContentLoaded', () => {
   function loadActiveTab() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs?.[0];
-      activeTabInfo = tab?.url ? { url: tab.url, title: tab.title || tab.url } : null;
+      const url = getTabUrl(tab);
+      activeTabInfo = url && isManageableUrl(url) ? { url, title: tab.title || url } : null;
       activeTabUrlEl.textContent = activeTabInfo?.url || t('status_refresh_no_tab');
     });
+  }
+
+  function getTabUrl(tab) {
+    return tab?.pendingUrl || tab?.url || '';
+  }
+
+  /**
+   * Converts a Chrome tab into a custom-list entry.
+   * Returns null for internal/browser URLs that the extension should not manage.
+   */
+  function entryFromTab(tab) {
+    const url = getTabUrl(tab);
+    if (!isManageableUrl(url)) return null;
+    return {
+      url,
+      name: tab.title || url,
+      rotate: true,
+      refresh: false,
+      refreshDelaySec: 0,
+      intervalSec: null
+    };
+  }
+
+  /**
+   * Validates manageable URLs for rotation/refresh (http, https, file).
+   * Partial hostnames are tested with an https:// prefix to match URL entry UX.
+   */
+  function isManageableUrl(candidate) {
+    if (!candidate) {
+      return false;
+    }
+    try {
+      const parsed = new URL(candidate);
+      return MANAGEABLE_PROTOCOLS.includes(parsed.protocol);
+    } catch (e) {
+      try {
+        const parsed = new URL(`https://${candidate}`);
+        return MANAGEABLE_PROTOCOLS.includes(parsed.protocol);
+      } catch (error) {
+        return false;
+      }
+    }
+  }
+
+  /**
+   * Counts entries that are both enabled for rotation and use manageable URLs.
+   */
+  function countRotatableEntries(entries) {
+    return (Array.isArray(entries) ? entries : []).filter(
+      (entry) => shouldRotateEntry(entry) && isManageableUrl(typeof entry === 'string' ? entry : entry.url)
+    ).length;
+  }
+
+  function getOpenTabEntries() {
+    return new Promise((resolve) => {
+      chrome.tabs.query({ currentWindow: true }, (tabs) => {
+        const seen = new Set();
+        const entries = (tabs || [])
+          .map(entryFromTab)
+          .filter((entry) => {
+            if (!entry || seen.has(entry.url)) return false;
+            seen.add(entry.url);
+            return true;
+          });
+        resolve(entries);
+      });
+    });
+  }
+
+  async function loadOpenTabsIntoList({ persist = true } = {}) {
+    const entries = await getOpenTabEntries();
+    if (!entries.length) {
+      setStatus(t('status_open_tabs_empty'), 'error');
+      return [];
+    }
+    useCustomListCheckbox.checked = true;
+    fillEntries(entries);
+    toggleCustomControls();
+    if (persist && !isInitializing) {
+      await persistCurrentFormState(parseProfileIndex(profileSelect.value));
+      setStatus(t('status_open_tabs_loaded', [entries.length]), 'ok');
+    }
+    return entries;
   }
 
   function normalizeTaskUrl(url) {
@@ -556,6 +707,10 @@ document.addEventListener('DOMContentLoaded', () => {
     schedulePersist(parseProfileIndex(profileSelect.value));
   });
 
+  loadOpenTabsBtn?.addEventListener('click', () => {
+    loadOpenTabsIntoList().catch(() => setStatus(t('status_open_tabs_load_fail'), 'error'));
+  });
+
   excludeToggle.addEventListener('change', toggleExcludeControls);
 
   function renderProfiles() {
@@ -643,23 +798,43 @@ document.addEventListener('DOMContentLoaded', () => {
         : configFromData(data);
       defaultConfigCache = baseConfig;
 
-      if (storedProfileIndex >= 0 && storedProfileIndex < profiles.length) {
-        profileSelect.value = String(storedProfileIndex);
-        lastSelectedProfileIndex = storedProfileIndex;
-        applyConfig(profiles[storedProfileIndex].config, true);
-      } else {
-        profileSelect.value = '';
-        lastSelectedProfileIndex = NO_PROFILE_SELECTED;
-        applyConfig(baseConfig, true);
-      }
+      const finishInit = async () => {
+        if (storedProfileIndex >= 0 && storedProfileIndex < profiles.length) {
+          profileSelect.value = String(storedProfileIndex);
+          lastSelectedProfileIndex = storedProfileIndex;
+          applyConfig(profiles[storedProfileIndex].config, true);
+        } else {
+          profileSelect.value = '';
+          lastSelectedProfileIndex = NO_PROFILE_SELECTED;
+          if (!baseConfig.customEntries.length) {
+            const openEntries = await getOpenTabEntries();
+            if (openEntries.length) {
+              baseConfig.customEntries = openEntries;
+              baseConfig.useCustomList = true;
+              defaultConfigCache = deepClone(baseConfig);
+              await storageArea.set({ defaultConfig: defaultConfigCache });
+            }
+          }
+          applyConfig(baseConfig, true);
+        }
 
-      if (data.isRunning) {
-        setStatus(t('status_rotation_running'), 'ok');
-      } else {
-        setStatus(t('status_rotation_stopped'), 'error');
-      }
-      setRunningUi(Boolean(data.isRunning));
-      isInitializing = false;
+        if (data.isRunning) {
+          setStatus(t('status_rotation_running'), 'ok');
+        } else {
+          setStatus(t('status_rotation_stopped'), 'error');
+        }
+        setRunningUi(Boolean(data?.isRunning));
+        isInitializing = false;
+      };
+
+      finishInit().catch((error) => {
+        console.error('Failed to initialize popup settings:', error);
+        // Recover to the storage-backed base config even if first-run tab preload fails.
+        applyConfig(baseConfig, true);
+        setStatus(t('status_init_fail'), 'error');
+        setRunningUi(Boolean(data?.isRunning));
+        isInitializing = false;
+      });
     }
   );
 
@@ -781,6 +956,26 @@ document.addEventListener('DOMContentLoaded', () => {
     flashButton(saveAsProfileBtn);
   });
 
+  duplicateProfileBtn?.addEventListener('click', async () => {
+    const rawValue = profileSelect.value;
+    const idx = parseProfileIndex(rawValue);
+    if (rawValue === '' || idx < 0 || idx >= profiles.length) {
+      setStatus(t('status_profile_select_first'), 'error');
+      return;
+    }
+    const source = profiles[idx];
+    const copyName = t('profile_copy_name', [source.name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`]);
+    const clonedConfig = deepClone(source.config);
+    profiles.push({ name: copyName, config: clonedConfig });
+    renderProfiles();
+    const selectedIdx = profiles.length - 1;
+    profileSelect.value = String(selectedIdx);
+    lastSelectedProfileIndex = selectedIdx;
+    await storageArea.set({ profiles, selectedProfileIndex: selectedIdx });
+    setStatus(t('status_profile_duplicated', [copyName]), 'ok');
+    flashButton(duplicateProfileBtn);
+  });
+
   deleteProfileBtn.addEventListener('click', async () => {
     const rawValue = profileSelect.value;
     const idx = parseProfileIndex(rawValue);
@@ -880,8 +1075,10 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       name = profiles[idx].name || `profile-${idx + 1}`;
     } else {
-      setStatus(t('status_profile_select_first'), 'error');
-      return;
+      // No selected profile means "export current form state" as a portable backup.
+      payload = {
+        current: getCurrentConfig()
+      };
     }
 
     const data = JSON.stringify(payload, null, 2);
@@ -914,11 +1111,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!raw || typeof raw !== 'object') return null;
     const url = safeStr(raw.url).trim();
     if (!url) return null;
-    const entry = {
-      url,
-      name: safeStr(raw.name, IMPORT_MAX_NAME_LEN).trim(),
-      refresh: Boolean(raw.refresh)
-    };
+      const entry = {
+        url,
+        name: safeStr(raw.name, IMPORT_MAX_NAME_LEN).trim(),
+        rotate: raw.rotate !== false,
+        refresh: Boolean(raw.refresh)
+      };
     const intervalRaw = Number(raw.intervalSec);
     entry.intervalSec = Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : null;
     const delayRaw = Number(raw.refreshDelaySec);
@@ -1126,7 +1324,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    if (cfg.useCustomList && (!cfg.customEntries.length || cfg.customEntries.length < 2)) {
+    if (cfg.useCustomList && countRotatableEntries(cfg.customEntries) < 2) {
       setStatus(t('status_list_too_short'), 'error');
       setRunningUi(false);
       return;
@@ -1178,6 +1376,9 @@ document.addEventListener('DOMContentLoaded', () => {
           setRunningUi(true);
         } else if (response && response.error === 'INVALID_INTERVAL') {
           setStatus(t('status_interval_invalid'), 'error');
+          setRunningUi(false);
+        } else if (response && response.error === 'NOT_ENOUGH_TARGETS') {
+          setStatus(t('status_not_enough_targets'), 'error');
           setRunningUi(false);
         } else {
           setStatus(t('status_rotation_start_fail'), 'error');

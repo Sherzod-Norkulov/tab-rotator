@@ -18,6 +18,14 @@
     "default_title": "Tab Rotator",
     "default_popup": "popup.html"
   },
+  "commands": {
+    "toggle-rotation": {
+      "description": "__MSG_commandToggleRotation__"
+    },
+    "stop-rotation": {
+      "description": "__MSG_commandStopRotation__"
+    }
+  },
   "icons": {
     "16": "assets/icons/icon16.png",
     "48": "assets/icons/icon48.png",
