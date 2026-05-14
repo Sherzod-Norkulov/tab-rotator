@@ -1,6 +1,8 @@
 {
   "extName": { "message": "Tab Rotator" },
   "extDescription": { "message": "Flexible tab rotation: global and per-tab timers, auto-refresh, profiles, exclusions, dedicated window, and import/export." },
+  "commandToggleRotation": { "message": "Toggle tab rotation" },
+  "commandStopRotation": { "message": "Stop tab rotation" },
 
   "start": { "message": "Start" },
   "stop": { "message": "Stop" },
@@ -32,6 +34,7 @@
   "title_apply": { "message": "Apply profile" },
   "title_save": { "message": "Save profile" },
   "title_save_as": { "message": "Save as" },
+  "title_duplicate": { "message": "Duplicate profile" },
   "title_edit": { "message": "Rename profile" },
   "title_delete": { "message": "Delete profile" },
   "title_export": { "message": "Export JSON" },
@@ -58,6 +61,7 @@
   "status_profile_name_required": { "message": "Enter a profile name." },
   "status_profile_saved": { "message": "Profile \"$1\" saved." },
   "status_profile_updated": { "message": "Profile \"$1\" updated." },
+  "status_profile_duplicated": { "message": "Profile \"$1\" duplicated." },
   "status_profile_select_first": { "message": "Select a profile or use \"Save as\"." },
   "status_profile_deleted": { "message": "Profile deleted." },
   "status_profile_choose": { "message": "Select a profile to edit." },
@@ -70,6 +74,7 @@
   "status_init_fail": { "message": "Failed to initialize settings." },
   "status_interval_invalid": { "message": "Interval must be at least 1 second." },
   "status_list_too_short": { "message": "Need at least 2 rows in the list." },
+  "status_not_enough_targets": { "message": "Need at least 2 open, supported tabs to rotate." },
   "status_rotation_started": { "message": "Rotation started $1." },
   "status_rotation_started_deferred": { "message": "Rotation will start after closing the popup $1." },
   "status_rotation_running": { "message": "Rotation is running and switching tabs." },
@@ -91,6 +96,7 @@
   "prompt_profile_rename_cancel": { "message": "Rename cancelled." },
   "prompt_profile_name_placeholder": { "message": "Profile" },
   "prompt_profile_save_as": { "message": "Profile name" },
+  "profile_copy_name": { "message": "$1 copy" },
 
   "list_info_custom": { "message": "(list: $1 rows)" },
   "list_info_all_tabs": { "message": "(all window tabs)" },

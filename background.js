@@ -27,6 +27,7 @@ const storageArea = chrome.storage.local;
 const IDLE_DETECTION_THRESHOLD_SEC = 60;
 const PAUSE_CHECK_INTERVAL_MS = 1000;
 const PAUSE_BADGE_TEXT = '⏸';
+const MANAGEABLE_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 // In MV3 service workers, chrome.runtime.getManifest() is available synchronously.
 // Keep a defensive fallback ('0.0.0') only for unexpected early execution; we no
 // longer hard-code a second copy of the release version here — that was a source
@@ -53,7 +54,7 @@ async function ensureDedicatedWindow(entries) {
     }
   }
 
-  const normalized = normalizeEntries(entries);
+  const normalized = normalizeEntries(entries).filter((entry) => entry.rotate !== false && isManageableUrl(entry.url));
   // Guard: never create an empty `about:blank` dedicated window when the list is empty.
   // Without this, enabling "Open list in a dedicated window" with no URLs would spawn a
   // blank monitoring window the user never asked for.
@@ -169,6 +170,17 @@ function normalizedMatchUrl(candidate) {
     return new URL(`https://${url}`).href;
   } catch (e) {
     return `https://${url}`;
+  }
+}
+
+function isManageableUrl(candidate) {
+  if (!candidate) {
+    return false;
+  }
+  try {
+    return MANAGEABLE_PROTOCOLS.has(new URL(normalizedMatchUrl(candidate)).protocol);
+  } catch (error) {
+    return false;
   }
 }
 
@@ -298,13 +310,13 @@ async function runRefreshTask(taskId) {
   }
 
   try {
-    if (!isRefreshExcluded(task.url)) {
+    if (isManageableUrl(task.url) && !isRefreshExcluded(task.url)) {
       const tabs = await chrome.tabs.query({});
       const tab = tabs.find((candidate) => {
         const candidateUrls = [];
         if (typeof candidate.pendingUrl === 'string') candidateUrls.push(candidate.pendingUrl);
         if (typeof candidate.url === 'string') candidateUrls.push(candidate.url);
-        return candidateUrls.some((url) => tabMatches(url, task.url));
+        return candidateUrls.some((url) => isManageableUrl(url) && tabMatches(url, task.url));
       });
       if (tab?.id) {
         await chrome.tabs.reload(tab.id);
@@ -359,7 +371,7 @@ async function getRotationPauseReason() {
 }
 
 async function prepareCustomTargets(entries, openMissing) {
-  const normalized = normalizeEntries(entries);
+  const normalized = normalizeEntries(entries).filter((entry) => entry.rotate !== false && isManageableUrl(entry.url));
 
   if (!normalized.length) {
     return [];
@@ -374,10 +386,6 @@ async function prepareCustomTargets(entries, openMissing) {
   const usedIds = new Set();
 
   for (const entry of normalized) {
-    if (entry.rotate === false) {
-      continue;
-    }
-
     const { url, refresh } = entry;
     const normalizedUrl = normalizedMatchUrl(url);
 
@@ -386,12 +394,12 @@ async function prepareCustomTargets(entries, openMissing) {
       if (typeof t.pendingUrl === 'string') candidateUrls.push(t.pendingUrl);
       if (typeof t.url === 'string') candidateUrls.push(t.url);
       return (
-        candidateUrls.some((u) => tabMatches(u, normalizedUrl)) &&
+        candidateUrls.some((u) => isManageableUrl(u) && tabMatches(u, normalizedUrl)) &&
         !usedIds.has(t.id)
       );
     });
 
-    if (!tab && openMissing) {
+    if (!tab && openMissing && isManageableUrl(normalizedUrl)) {
       const createOptions = { url: normalizedUrl, active: false };
       if (currentSettings.useDedicatedWindow && ensuredWindowId) {
         createOptions.windowId = ensuredWindowId;
@@ -452,12 +460,15 @@ function buildCandidatesFromCustomEntries(tabs) {
     }
 
     const targetUrl = normalizedMatchUrl(entry.url);
+    if (!isManageableUrl(targetUrl)) {
+      continue;
+    }
     const found = tabs.find((t) => {
       const candidateUrls = [];
       if (typeof t.pendingUrl === 'string') candidateUrls.push(t.pendingUrl);
       if (typeof t.url === 'string') candidateUrls.push(t.url);
       return candidateUrls.some(
-        (u) => u && !isExcluded(u, excluded) && tabMatches(u, targetUrl)
+        (u) => u && isManageableUrl(u) && !isExcluded(u, excluded) && tabMatches(u, targetUrl)
       );
     });
 
@@ -478,9 +489,10 @@ function buildCandidatesFromCustomEntries(tabs) {
     for (const rt of rotationTargets) {
       const tab = tabMap.get(rt.tabId);
       if (
-        tab &&
-        !usedIds.has(tab.id) &&
-        !isExcluded(
+          tab &&
+          !usedIds.has(tab.id) &&
+          isManageableUrl(typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url) &&
+          !isExcluded(
           typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url,
           excluded
         )
@@ -511,6 +523,9 @@ function findEntryForTab(tab) {
         ? tab.url
         : '';
   for (const entry of currentSettings.customEntries) {
+    if (entry.rotate === false || !isManageableUrl(entry.url)) {
+      continue;
+    }
     const targetUrl = normalizedMatchUrl(entry.url);
     if (tabMatches(tabUrl, targetUrl)) {
       return entry;
@@ -582,7 +597,10 @@ async function rotateTabs() {
         return;
       }
       candidates = tabs
-        .filter((t) => !isExcluded(typeof t.pendingUrl === 'string' ? t.pendingUrl : t.url, excluded))
+        .filter((t) => {
+          const url = typeof t.pendingUrl === 'string' ? t.pendingUrl : t.url;
+          return isManageableUrl(url) && !isExcluded(url, excluded);
+        })
         .map((t) => ({ tab: t, refresh: false, intervalSec: null }));
       if (candidates.length < 2) {
         return;
@@ -737,9 +755,23 @@ async function startRotator(options = {}) {
     : [];
 
   if (normalized.useCustomList && rotationTargets.length < 2) {
-    // если вкладок нет или меньше двух, принудительно создаём недостающие
-    rotationTargets = await prepareCustomTargets(normalized.customEntries, true);
-    normalized.openCustomTabs = true;
+    chrome.action.setIcon({ path: iconOff }).catch(() => {});
+    await persistState({ isRunning: false });
+    return { ok: false, error: 'NOT_ENOUGH_TARGETS' };
+  }
+
+  if (!normalized.useCustomList) {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    const excluded = parseExcludedDomains(normalized.excludeDomains);
+    const candidates = (tabs || []).filter((tab) => {
+      const url = typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url;
+      return isManageableUrl(url) && !isExcluded(url, excluded);
+    });
+    if (candidates.length < 2) {
+      chrome.action.setIcon({ path: iconOff }).catch(() => {});
+      await persistState({ isRunning: false });
+      return { ok: false, error: 'NOT_ENOUGH_TARGETS' };
+    }
   }
 
   isRunning = true;
@@ -747,6 +779,7 @@ async function startRotator(options = {}) {
   scheduleNextTick(intervalMs);
 
   await persistState({ isRunning: true });
+  return { ok: true };
 }
 
 function scheduleNextTick(delayMs) {
@@ -940,8 +973,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        await startRotator(startOptions);
-        sendResponse({ ok: true });
+        const result = await startRotator(startOptions);
+        sendResponse(result?.ok === false ? result : { ok: true });
       } finally {
         explicitCommandInProgress = false;
       }
@@ -994,6 +1027,17 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 setTimeout(() => restoreFromStorage(), 0);
+
+chrome.commands?.onCommand?.addListener((command) => {
+  if (command === 'stop-rotation') {
+    stopRotator().catch((err) => console.error('Command stop failed:', err));
+    return;
+  }
+  if (command === 'toggle-rotation') {
+    const action = isRunning ? stopRotator() : startRotator(currentSettings);
+    action.catch((err) => console.error('Command toggle failed:', err));
+  }
+});
 
 chrome.runtime.onConnect.addListener((port) => {
   // Two port names are used by popup.js:

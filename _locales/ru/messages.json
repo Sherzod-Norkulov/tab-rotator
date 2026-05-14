@@ -1,6 +1,8 @@
 {
   "extName": { "message": "Tab Rotator" },
   "extDescription": { "message": "Гибкая ротация вкладок: общий интервал, индивидуальные таймеры, автообновление, профили, исключения, отдельное окно и импорт/экспорт." },
+  "commandToggleRotation": { "message": "Включить/выключить ротацию вкладок" },
+  "commandStopRotation": { "message": "Остановить ротацию вкладок" },
 
   "start": { "message": "Запустить" },
   "stop": { "message": "Остановить" },
@@ -32,6 +34,7 @@
   "title_apply": { "message": "Применить профиль" },
   "title_save": { "message": "Сохранить профиль" },
   "title_save_as": { "message": "Сохранить как" },
+  "title_duplicate": { "message": "Дублировать профиль" },
   "title_edit": { "message": "Переименовать профиль" },
   "title_delete": { "message": "Удалить профиль" },
   "title_export": { "message": "Экспорт JSON" },
@@ -58,6 +61,7 @@
   "status_profile_name_required": { "message": "Введите имя профиля." },
   "status_profile_saved": { "message": "Профиль \"$1\" сохранён." },
   "status_profile_updated": { "message": "Профиль \"$1\" обновлён." },
+  "status_profile_duplicated": { "message": "Профиль \"$1\" продублирован." },
   "status_profile_select_first": { "message": "Выберите профиль или используйте \"Сохранить как\"." },
   "status_profile_deleted": { "message": "Профиль удалён." },
   "status_profile_choose": { "message": "Выберите профиль для изменения." },
@@ -70,6 +74,7 @@
   "status_init_fail": { "message": "Не удалось инициализировать настройки." },
   "status_interval_invalid": { "message": "Интервал должен быть не меньше 1 секунды." },
   "status_list_too_short": { "message": "Нужно минимум 2 строки в списке вкладок." },
+  "status_not_enough_targets": { "message": "Нужно минимум 2 открытые поддерживаемые вкладки для ротации." },
   "status_rotation_started": { "message": "Ротация запущена $1." },
   "status_rotation_started_deferred": { "message": "Ротация начнётся после закрытия попапа $1." },
   "status_rotation_running": { "message": "Ротация запущена и переключает вкладки." },
@@ -91,6 +96,7 @@
   "prompt_profile_rename_cancel": { "message": "Переименование отменено." },
   "prompt_profile_name_placeholder": { "message": "Профиль" },
   "prompt_profile_save_as": { "message": "Название профиля" },
+  "profile_copy_name": { "message": "$1 копия" },
 
   "list_info_custom": { "message": "(список: $1 строк)" },
   "list_info_all_tabs": { "message": "(все вкладки окна)" },

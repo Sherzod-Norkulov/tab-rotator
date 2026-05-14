@@ -1,6 +1,8 @@
 {
   "extName": { "message": "Tab Rotator" },
   "extDescription": { "message": "Moslashuvchan yorliq aylantirish: umumiy va alohida taymerlar, avto-yangilash, profillar, istisnolar, alohida oyna va import/eksport." },
+  "commandToggleRotation": { "message": "Yorliq aylantirishni yoqish/o'chirish" },
+  "commandStopRotation": { "message": "Yorliq aylantirishni to'xtatish" },
 
   "start": { "message": "Boshlash" },
   "stop": { "message": "To'xtatish" },
@@ -32,6 +34,7 @@
   "title_apply": { "message": "Profilni qo'llash" },
   "title_save": { "message": "Profilni saqlash" },
   "title_save_as": { "message": "Saqlash (yangi nom)" },
+  "title_duplicate": { "message": "Profilni nusxalash" },
   "title_edit": { "message": "Profil nomini o'zgartirish" },
   "title_delete": { "message": "Profilni o'chirish" },
   "title_export": { "message": "JSON eksporti" },
@@ -58,6 +61,7 @@
   "status_profile_name_required": { "message": "Profil nomini kiriting." },
   "status_profile_saved": { "message": "Profil \"$1\" saqlandi." },
   "status_profile_updated": { "message": "Profil \"$1\" yangilandi." },
+  "status_profile_duplicated": { "message": "Profil \"$1\" nusxalandi." },
   "status_profile_select_first": { "message": "Profilni tanlang yoki \"Saqlash (yangi nom)\" ni bosing." },
   "status_profile_deleted": { "message": "Profil o'chirildi." },
   "status_profile_choose": { "message": "O'zgartirish uchun profilni tanlang." },
@@ -70,6 +74,7 @@
   "status_init_fail": { "message": "Sozlamalarni ishga tayyorlab bo'lmadi." },
   "status_interval_invalid": { "message": "Oraliq kamida 1 soniya bo'lishi kerak." },
   "status_list_too_short": { "message": "Ro'yxatda kamida 2 qator kerak." },
+  "status_not_enough_targets": { "message": "Aylantirish uchun kamida 2 ta ochiq, qo'llab-quvvatlanadigan yorliq kerak." },
   "status_rotation_started": { "message": "Aylantirish boshlandi $1." },
   "status_rotation_started_deferred": { "message": "Popup yopilgandan so'ng aylantirish boshlanadi $1." },
   "status_rotation_running": { "message": "Aylantirish ishlamoqda va yorliqlarni almashtirmoqda." },
@@ -91,6 +96,7 @@
   "prompt_profile_rename_cancel": { "message": "Nom o'zgartirish bekor qilindi." },
   "prompt_profile_name_placeholder": { "message": "Profil" },
   "prompt_profile_save_as": { "message": "Profil nomi" },
+  "profile_copy_name": { "message": "$1 nusxasi" },
 
   "list_info_custom": { "message": "(ro'yxat: $1 qator)" },
   "list_info_all_tabs": { "message": "(oynadagi barcha yorliqlar)" },

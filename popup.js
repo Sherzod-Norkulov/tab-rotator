@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const applyProfileBtn = document.getElementById('applyProfile');
   const saveProfileBtn = document.getElementById('saveProfile');
   const saveAsProfileBtn = document.getElementById('saveAsProfile');
+  const duplicateProfileBtn = document.getElementById('duplicateProfile');
   const editProfileBtn = document.getElementById('editProfile');
   const deleteProfileBtn = document.getElementById('deleteProfile');
   const exportProfileBtn = document.getElementById('exportProfile');
@@ -499,14 +500,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function loadActiveTab() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs?.[0];
-      activeTabInfo = tab?.url ? { url: tab.url, title: tab.title || tab.url } : null;
+      activeTabInfo = tab?.url && isManageableUrl(tab.url) ? { url: tab.url, title: tab.title || tab.url } : null;
       activeTabUrlEl.textContent = activeTabInfo?.url || t('status_refresh_no_tab');
     });
   }
 
   function entryFromTab(tab) {
     const url = tab?.pendingUrl || tab?.url || '';
-    if (!url) return null;
+    if (!isManageableUrl(url)) return null;
     return {
       url,
       name: tab.title || url,
@@ -515,6 +516,29 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshDelaySec: 0,
       intervalSec: null
     };
+  }
+
+  function isManageableUrl(candidate) {
+    if (!candidate) {
+      return false;
+    }
+    try {
+      const parsed = new URL(candidate);
+      return ['http:', 'https:', 'file:'].includes(parsed.protocol);
+    } catch (e) {
+      try {
+        const parsed = new URL(`https://${candidate}`);
+        return ['http:', 'https:', 'file:'].includes(parsed.protocol);
+      } catch (error) {
+        return false;
+      }
+    }
+  }
+
+  function countRotatableEntries(entries) {
+    return (Array.isArray(entries) ? entries : []).filter(
+      (entry) => shouldRotateEntry(entry) && isManageableUrl(typeof entry === 'string' ? entry : entry.url)
+    ).length;
   }
 
   function getOpenTabEntries() {
@@ -909,6 +933,28 @@ document.addEventListener('DOMContentLoaded', () => {
     flashButton(saveAsProfileBtn);
   });
 
+  duplicateProfileBtn?.addEventListener('click', async () => {
+    const rawValue = profileSelect.value;
+    const idx = parseProfileIndex(rawValue);
+    if (rawValue === '' || idx < 0 || idx >= profiles.length) {
+      setStatus(t('status_profile_select_first'), 'error');
+      return;
+    }
+    const source = profiles[idx];
+    const copyName = t('profile_copy_name', [source.name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`]);
+    const clonedConfig = typeof structuredClone === 'function'
+      ? structuredClone(source.config)
+      : JSON.parse(JSON.stringify(source.config));
+    profiles.push({ name: copyName, config: clonedConfig });
+    renderProfiles();
+    const selectedIdx = profiles.length - 1;
+    profileSelect.value = String(selectedIdx);
+    lastSelectedProfileIndex = selectedIdx;
+    await storageArea.set({ profiles, selectedProfileIndex: selectedIdx });
+    setStatus(t('status_profile_duplicated', [copyName]), 'ok');
+    flashButton(duplicateProfileBtn);
+  });
+
   deleteProfileBtn.addEventListener('click', async () => {
     const rawValue = profileSelect.value;
     const idx = parseProfileIndex(rawValue);
@@ -1008,8 +1054,9 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       name = profiles[idx].name || `profile-${idx + 1}`;
     } else {
-      setStatus(t('status_profile_select_first'), 'error');
-      return;
+      payload = {
+        current: getCurrentConfig()
+      };
     }
 
     const data = JSON.stringify(payload, null, 2);
@@ -1255,7 +1302,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    if (cfg.useCustomList && (!cfg.customEntries.length || cfg.customEntries.length < 2)) {
+    if (cfg.useCustomList && countRotatableEntries(cfg.customEntries) < 2) {
       setStatus(t('status_list_too_short'), 'error');
       setRunningUi(false);
       return;
@@ -1307,6 +1354,9 @@ document.addEventListener('DOMContentLoaded', () => {
           setRunningUi(true);
         } else if (response && response.error === 'INVALID_INTERVAL') {
           setStatus(t('status_interval_invalid'), 'error');
+          setRunningUi(false);
+        } else if (response && response.error === 'NOT_ENOUGH_TARGETS') {
+          setStatus(t('status_not_enough_targets'), 'error');
           setRunningUi(false);
         } else {
           setStatus(t('status_rotation_start_fail'), 'error');
