@@ -67,6 +67,7 @@
   "status_export_ready": { "message": "Export ready." },
   "status_import_ok": { "message": "Import completed." },
   "status_import_fail": { "message": "Failed to import JSON." },
+  "status_init_fail": { "message": "Failed to initialize settings." },
   "status_interval_invalid": { "message": "Interval must be at least 1 second." },
   "status_list_too_short": { "message": "Need at least 2 rows in the list." },
   "status_rotation_started": { "message": "Rotation started $1." },

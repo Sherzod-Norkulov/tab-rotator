@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let isInitializing = true;
   const VALID_THEME_MODES = ['light', 'dark', 'auto'];
   let themeMode = 'auto';
-  const systemTheme = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
   const t = (key, args = []) => {
     const msg = chrome.i18n?.getMessage ? chrome.i18n.getMessage(key, args) : '';
@@ -114,7 +114,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function applyThemeMode(mode = 'auto') {
     themeMode = VALID_THEME_MODES.includes(mode) ? mode : 'auto';
-    const enabled = themeMode === 'dark' || (themeMode === 'auto' && Boolean(systemTheme?.matches));
+    const prefersDark = window.matchMedia
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : Boolean(systemThemeQuery?.matches);
+    const enabled = themeMode === 'dark' || (themeMode === 'auto' && prefersDark);
     if (darkModeToggleBtn) {
       darkModeToggleBtn.textContent = themeMode === 'auto' ? '◐' : enabled ? '☀' : '☾';
       darkModeToggleBtn.title = t(`theme_${themeMode}`);
@@ -157,9 +160,9 @@ document.addEventListener('DOMContentLoaded', () => {
       applyThemeMode('auto');
     }
   };
-  systemTheme?.addEventListener?.('change', handleSystemThemeChange);
+  systemThemeQuery?.addEventListener?.('change', handleSystemThemeChange);
   window.addEventListener('unload', () => {
-    systemTheme?.removeEventListener?.('change', handleSystemThemeChange);
+    systemThemeQuery?.removeEventListener?.('change', handleSystemThemeChange);
   });
 
   if (openInWindowBtn) {
@@ -394,7 +397,7 @@ document.addEventListener('DOMContentLoaded', () => {
         createEntryRow({
           url: typeof entry === 'string' ? entry : entry.url,
           name: typeof entry === 'object' && entry.name ? entry.name : '',
-          rotate: typeof entry === 'object' ? shouldRotateEntry(entry) : true,
+          rotate: shouldRotateEntry(entry),
           refresh: typeof entry === 'object' && entry.refresh,
           refreshDelaySec:
             typeof entry === 'object' && Number.isFinite(entry.refreshDelaySec) && entry.refreshDelaySec >= 0
@@ -760,7 +763,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (openEntries.length) {
               baseConfig.customEntries = openEntries;
               baseConfig.useCustomList = true;
-              defaultConfigCache = { ...baseConfig };
+              defaultConfigCache = typeof structuredClone === 'function'
+                ? structuredClone(baseConfig)
+                : JSON.parse(JSON.stringify(baseConfig));
               await storageArea.set({ defaultConfig: defaultConfigCache });
             }
           }
@@ -779,7 +784,7 @@ document.addEventListener('DOMContentLoaded', () => {
       finishInit().catch((error) => {
         console.error('Failed to initialize popup settings:', error);
         applyConfig(baseConfig, true);
-        setStatus(t('status_open_tabs_load_fail'), 'error');
+        setStatus(t('status_init_fail'), 'error');
         setRunningUi(Boolean(data.isRunning));
         isInitializing = false;
       });

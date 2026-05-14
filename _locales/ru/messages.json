@@ -67,6 +67,7 @@
   "status_export_ready": { "message": "Экспорт готов." },
   "status_import_ok": { "message": "Импорт завершён." },
   "status_import_fail": { "message": "Не удалось импортировать JSON." },
+  "status_init_fail": { "message": "Не удалось инициализировать настройки." },
   "status_interval_invalid": { "message": "Интервал должен быть не меньше 1 секунды." },
   "status_list_too_short": { "message": "Нужно минимум 2 строки в списке вкладок." },
   "status_rotation_started": { "message": "Ротация запущена $1." },

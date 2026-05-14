@@ -67,6 +67,7 @@
   "status_export_ready": { "message": "Eksport tayyor." },
   "status_import_ok": { "message": "Import yakunlandi." },
   "status_import_fail": { "message": "JSON import qilib bo'lmadi." },
+  "status_init_fail": { "message": "Sozlamalarni ishga tayyorlab bo'lmadi." },
   "status_interval_invalid": { "message": "Oraliq kamida 1 soniya bo'lishi kerak." },
   "status_list_too_short": { "message": "Ro'yxatda kamida 2 qator kerak." },
   "status_rotation_started": { "message": "Aylantirish boshlandi $1." },

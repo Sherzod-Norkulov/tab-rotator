@@ -577,7 +577,8 @@ async function rotateTabs() {
     if (candidates.length < 2) {
       if (currentSettings.useCustomList) {
         // Respect per-entry rotation toggles: do not fall back to all tabs when
-        // the custom list has fewer than two enabled rotation candidates.
+        // the custom list has fewer than two enabled rotation candidates. This
+        // intentionally leaves rotation idle until the user enables more entries.
         return;
       }
       candidates = tabs
