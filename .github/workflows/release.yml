@@ -66,22 +66,43 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Получить версию из CI
+      - name: Получить версию из manifest.json
         id: version
         env:
-          VERSION: ${{ needs.ci.outputs.version }}
+          CI_VERSION: ${{ needs.ci.outputs.version }}
+          CI_ARTIFACT_NAME: ${{ needs.ci.outputs.artifact-name }}
         run: |
           set -euo pipefail
-          if [[ -z "${VERSION}" ]]; then
-            echo "::error::CI не вернул version; проверьте ci.yml outputs"
+          version="$(python3 - <<'PY'
+          import json
+          with open('manifest.json', encoding='utf-8') as fh:
+              print(json.load(fh)['version'])
+          PY
+          )"
+          if [[ -z "${version}" ]]; then
+            echo "::error::Не удалось прочитать version из manifest.json"
             exit 1
           fi
-          tag="v${VERSION}"
+          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "::error::Версия '${version}' из manifest.json не соответствует формату X.Y[.Z[.W]]"
+            exit 1
+          fi
+          if [[ "${CI_VERSION}" != "${version}" ]]; then
+            echo "::error::Версия CI (${CI_VERSION:-пусто}) не совпадает с manifest.json (${version})"
+            exit 1
+          fi
+          expected_artifact="tab-rotator-${version}"
+          if [[ "${CI_ARTIFACT_NAME}" != "${expected_artifact}" ]]; then
+            echo "::error::Имя CI-артефакта (${CI_ARTIFACT_NAME:-пусто}) не совпадает с ожидаемым ${expected_artifact}"
+            exit 1
+          fi
+          tag="v${version}"
           release_name="Tab Rotator ${tag}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}"         >> "$GITHUB_OUTPUT"
           echo "name=${release_name}" >> "$GITHUB_OUTPUT"
-          echo "Версия: ${VERSION}, тег: ${tag}"
+          echo "artifact=${expected_artifact}" >> "$GITHUB_OUTPUT"
+          echo "Версия из manifest.json: ${version}, тег: ${tag}"
 
       - name: Проверить, существует ли релиз или тег
         id: check
@@ -90,44 +111,55 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          exists="false"
+          release_exists="false"
+          tag_exists="false"
           # 1) Проверяем GitHub Release по тегу.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "GitHub Release '$TAG' уже существует — публикация пропускается."
-            exists="true"
+            release_exists="true"
           fi
           # 2) Проверяем git-тег в remote.
-          if [[ "$exists" != "true" ]]; then
-            if git ls-remote --tags --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-              echo "Git-тег '$TAG' уже существует в origin — публикация пропускается."
-              exists="true"
-            fi
+          if git ls-remote --tags --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Git-тег '$TAG' уже существует в origin."
+            tag_exists="true"
           fi
-          echo "exists=${exists}" >> "$GITHUB_OUTPUT"
+          echo "release_exists=${release_exists}" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=${tag_exists}" >> "$GITHUB_OUTPUT"
 
       - name: Скачать ZIP из CI job
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.release_exists == 'false'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.ci.outputs.artifact-name }}
+          name: ${{ steps.version.outputs.artifact }}
           path: dist
 
       - name: Проверить, что ZIP на месте
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.release_exists == 'false'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           zip_path="dist/tab-rotator-${VERSION}.zip"
-          if [[ ! -f "$zip_path" ]]; then
-            echo "::error::Артефакт не найден: $zip_path"
+          if [[ ! -s "$zip_path" ]]; then
+            echo "::error::Артефакт не найден или пуст: $zip_path"
             ls -la dist || true
             exit 1
           fi
+          python3 - "$zip_path" "$VERSION" <<'PY'
+          import json
+          import sys
+          import zipfile
+          zip_path, expected = sys.argv[1], sys.argv[2]
+          with zipfile.ZipFile(zip_path) as archive:
+              manifest = json.loads(archive.read('manifest.json').decode('utf-8'))
+          actual = manifest.get('version')
+          if actual != expected:
+              raise SystemExit(f"manifest.json внутри ZIP содержит version={actual!r}, ожидалось {expected!r}")
+          PY
           echo "Готово к публикации: $zip_path ($(wc -c < "$zip_path") байт)"
 
       - name: Извлечь секцию из CHANGELOG.md
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.release_exists == 'false'
         id: notes
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -148,22 +180,29 @@ jobs:
           fi
           # Подчищаем ведущие/замыкающие пустые строки.
           if [[ -s "$notes_file" ]]; then
-            # Удалить ведущие пустые строки.
-            sed -i -e '/./,$!d' "$notes_file"
+            python3 - "$notes_file" <<'PY'
+            import sys
+            path = sys.argv[1]
+            with open(path, encoding='utf-8') as fh:
+                text = fh.read().strip()
+            with open(path, 'w', encoding='utf-8') as fh:
+                if text:
+                    fh.write(text + '\n')
+            PY
             echo "Секция для v${VERSION} найдена в CHANGELOG.md."
           else
             # Fallback: короткое авто-описание, если секции нет.
-            cat > "$notes_file" <<EOF
-          Автоматический релиз Tab Rotator v${VERSION}.
-
-          Подробные изменения см. в [CHANGELOG.md](./CHANGELOG.md).
-          EOF
+            printf 'Автоматический релиз Tab Rotator v%s.\n\nПодробные изменения см. в [CHANGELOG.md](./CHANGELOG.md).\n' "$VERSION" > "$notes_file"
             echo "::warning::Секция для v${VERSION} не найдена в CHANGELOG.md — использован fallback."
+          fi
+          if [[ ! -s "$notes_file" ]]; then
+            echo "::error::Release notes пусты после fallback"
+            exit 1
           fi
           echo "path=${notes_file}" >> "$GITHUB_OUTPUT"
 
       - name: Создать git-тег
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.release_exists == 'false' && steps.check.outputs.tag_exists == 'false'
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -173,8 +212,12 @@ jobs:
           git tag -a "$TAG" -m "Tab Rotator $TAG"
           git push origin "refs/tags/${TAG}"
 
+      - name: Использовать существующий git-тег
+        if: steps.check.outputs.release_exists == 'false' && steps.check.outputs.tag_exists == 'true'
+        run: echo "Релиз будет создан для уже существующего тега ${{ steps.version.outputs.tag }}."
+
       - name: Создать GitHub Release и приложить ZIP
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.release_exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -193,8 +236,8 @@ jobs:
 
       - name: Итог
         run: |
-          if [[ "${{ steps.check.outputs.exists }}" == "true" ]]; then
-            echo "Релиз ${{ steps.version.outputs.tag }} уже существует — ничего не делали."
+          if [[ "${{ steps.check.outputs.release_exists }}" == "true" ]]; then
+            echo "GitHub Release ${{ steps.version.outputs.tag }} уже существует — ничего не делали."
           else
             echo "Создан релиз ${{ steps.version.outputs.tag }} с артефактом dist/tab-rotator-${{ steps.version.outputs.version }}.zip"
           fi

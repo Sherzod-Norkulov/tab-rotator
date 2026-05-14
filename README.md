@@ -7,7 +7,7 @@ Chrome-расширение (Manifest V3) для автоматического 
 паузы по активности/бездействию, тёмную тему, случайный порядок и бейдж
 обратного отсчёта на иконке.
 
-- **Версия:** 1.3.0
+- **Версия:** 1.4.0
 - **Manifest:** v3
 - **Локализации:** `en`, `ru`, `uz` (через `_locales/`)
 - **Permissions:** `tabs`, `storage`, `idle` (без host permissions)
@@ -190,7 +190,7 @@ bash scripts/package.sh
 - создаёт `dist/tab-rotator-<version>.zip`, исключая `.git`, `.github`, `dist`,
   `scripts`, `*.md`, редакторские файлы.
 
-На выходе: `dist/tab-rotator-1.3.0.zip` — это артефакт для Chrome Web Store.
+На выходе: `dist/tab-rotator-<version>.zip`, где `<version>` берётся из `manifest.json`; для текущего релиза — `dist/tab-rotator-1.4.0.zip`.
 
 Требования: `bash`, `zip`, `unzip` (для self-check). На Windows используйте WSL или
 Git Bash.
@@ -256,8 +256,8 @@ Git Bash.
 - **Release** — `.github/workflows/release.yml`. Запускается только на
   push в `main` (т. е. после merge PR). Сначала полностью прогоняет
   CI; если проверки прошли, читает версию из `manifest.json`,
-  проверяет, что тега `v<version>` ещё нет, создаёт его и публикует
-  GitHub Release с именем `Tab Rotator v<version>`, прикладывая
+  сверяет её с ZIP-артефактом, создаёт отсутствующий тег `v<version>`
+  и публикует GitHub Release с именем `Tab Rotator v<version>`, прикладывая
   `dist/tab-rotator-<version>.zip`. Release notes берутся из секции
   `## [<version>]` в `CHANGELOG.md`. Если тег уже существует, workflow
   корректно завершается без дубликата. Параллельные релизные прогоны

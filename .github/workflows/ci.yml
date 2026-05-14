@@ -99,26 +99,38 @@ jobs:
         id: artifact-meta
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          zip_files=(dist/tab-rotator-*.zip)
-          shopt -u nullglob
-          if [[ "${#zip_files[@]}" -ne 1 ]]; then
-            echo "::error::После сборки ожидался ровно один ZIP в dist/, найдено: ${#zip_files[@]}"
-            ls -la dist || true
-            exit 1
-          fi
-          zip_path="${zip_files[0]}"
-          zip_name="$(basename "$zip_path")"
-          version="${zip_name#tab-rotator-}"
-          version="${version%.zip}"
+
+          version="$(python3 - <<'PY'
+          import json
+          with open('manifest.json', encoding='utf-8') as fh:
+              print(json.load(fh)['version'])
+          PY
+          )"
           if [[ -z "${version}" ]]; then
-            echo "::error::Не удалось извлечь version из имени ZIP: $zip_name"
+            echo "::error::Не удалось прочитать version из manifest.json"
             exit 1
           fi
           if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
-            echo "::error::Версия '${version}' из имени ZIP '${zip_name}' не соответствует формату X.Y[.Z[.W]]"
+            echo "::error::Версия '${version}' из manifest.json не соответствует формату X.Y[.Z[.W]]"
             exit 1
           fi
+
+          zip_path="dist/tab-rotator-${version}.zip"
+          if [[ ! -s "$zip_path" ]]; then
+            echo "::error::После сборки не найден непустой ZIP для версии из manifest.json: $zip_path"
+            ls -la dist || true
+            exit 1
+          fi
+
+          shopt -s nullglob
+          zip_files=(dist/tab-rotator-*.zip)
+          shopt -u nullglob
+          if [[ "${#zip_files[@]}" -ne 1 || "${zip_files[0]}" != "$zip_path" ]]; then
+            echo "::error::Ожидался ровно один ZIP с именем $zip_path, найдено: ${zip_files[*]:-(нет)}"
+            ls -la dist || true
+            exit 1
+          fi
+
           echo "Собран: $zip_path ($(wc -c < "$zip_path") байт)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "name=tab-rotator-${version}" >> "$GITHUB_OUTPUT"
