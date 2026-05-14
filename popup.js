@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let autoPersistTimer = null;
   let defaultConfigCache = null;
   let isInitializing = true;
+  const VALID_THEME_MODES = ['light', 'dark', 'auto'];
   let themeMode = 'auto';
   const systemTheme = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
@@ -112,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
   function applyThemeMode(mode = 'auto') {
-    themeMode = ['light', 'dark', 'auto'].includes(mode) ? mode : 'auto';
+    themeMode = VALID_THEME_MODES.includes(mode) ? mode : 'auto';
     const enabled = themeMode === 'dark' || (themeMode === 'auto' && Boolean(systemTheme?.matches));
     if (darkModeToggleBtn) {
       darkModeToggleBtn.textContent = themeMode === 'auto' ? '◐' : enabled ? '☀' : '☾';
@@ -124,7 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   storageArea.get(['darkMode', 'themeMode'], (data) => {
-    const storedMode = ['light', 'dark', 'auto'].includes(data.themeMode)
+    const storedMode = VALID_THEME_MODES.includes(data.themeMode)
       ? data.themeMode
       : data.darkMode === true
         ? 'dark'
@@ -145,10 +146,14 @@ document.addEventListener('DOMContentLoaded', () => {
     await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' });
   });
 
-  systemTheme?.addEventListener?.('change', () => {
+  const handleSystemThemeChange = () => {
     if (themeMode === 'auto') {
       applyThemeMode('auto');
     }
+  };
+  systemTheme?.addEventListener?.('change', handleSystemThemeChange);
+  window.addEventListener('unload', () => {
+    systemTheme?.removeEventListener?.('change', handleSystemThemeChange);
   });
 
   if (openInWindowBtn) {
@@ -275,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const rotateCheckbox = document.createElement('input');
     rotateCheckbox.type = 'checkbox';
     rotateCheckbox.dataset.role = 'rotate';
-    rotateCheckbox.checked = entry.rotate !== false;
+    rotateCheckbox.checked = shouldRotateEntry(entry);
     rotateCheckbox.style.gridArea = 'ocheck';
     rotateCheckbox.style.justifySelf = 'end';
     const rotateLabel = document.createElement('span');
@@ -382,7 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
         createEntryRow({
           url: typeof entry === 'string' ? entry : entry.url,
           name: typeof entry === 'object' && entry.name ? entry.name : '',
-          rotate: typeof entry === 'object' ? entry.rotate !== false : true,
+          rotate: shouldRotateEntry(entry),
           refresh: typeof entry === 'object' && entry.refresh,
           refreshDelaySec:
             typeof entry === 'object' && Number.isFinite(entry.refreshDelaySec) && entry.refreshDelaySec >= 0
@@ -425,6 +430,10 @@ document.addEventListener('DOMContentLoaded', () => {
         return { url, name, rotate, refresh, refreshDelaySec, intervalSec };
       })
       .filter((item) => item.url);
+  }
+
+  function shouldRotateEntry(entry) {
+    return entry && typeof entry === 'object' ? entry.rotate !== false : true;
   }
 
   function renderRefreshTasks() {

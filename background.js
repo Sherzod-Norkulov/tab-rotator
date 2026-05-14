@@ -574,11 +574,10 @@ async function rotateTabs() {
 
     const excluded = parseExcludedDomains(currentSettings.excludeDomains);
 
-    if (currentSettings.useCustomList && candidates.length < 2) {
-      return;
-    }
-
-    if (!currentSettings.useCustomList && candidates.length < 2) {
+    if (candidates.length < 2) {
+      if (currentSettings.useCustomList) {
+        return;
+      }
       candidates = tabs
         .filter((t) => !isExcluded(typeof t.pendingUrl === 'string' ? t.pendingUrl : t.url, excluded))
         .map((t) => ({ tab: t, refresh: false, intervalSec: null }));
