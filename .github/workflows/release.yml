@@ -12,9 +12,10 @@ name: Release
 #      Если CI падает, релиз не создаётся.
 #   2. Job `release` — зависит от `ci`:
 #       * читает версию из manifest.json,
-#       * проверяет, существует ли уже тег vX.Y.Z или GitHub Release,
-#       * если уже существует — завершает работу корректно, без ошибки
-#         и без дубликата,
+#       * проверяет, существует ли уже GitHub Release или тег vX.Y.Z,
+#       * если GitHub Release уже существует — завершает работу корректно,
+#         без ошибки и без дубликата,
+#       * если существует только тег — переиспользует его для безопасного rerun,
 #       * иначе создаёт git-tag, извлекает секцию из CHANGELOG.md и
 #         публикует GitHub Release с прикреплённым ZIP.
 #
@@ -180,15 +181,7 @@ jobs:
           fi
           # Подчищаем ведущие/замыкающие пустые строки.
           if [[ -s "$notes_file" ]]; then
-            python3 - "$notes_file" <<'PY'
-            import sys
-            path = sys.argv[1]
-            with open(path, encoding='utf-8') as fh:
-                text = fh.read().strip()
-            with open(path, 'w', encoding='utf-8') as fh:
-                if text:
-                    fh.write(text + '\n')
-            PY
+            python3 -c "import pathlib, sys; path = pathlib.Path(sys.argv[1]); text = path.read_text(encoding='utf-8').strip(); path.write_text((text + '\n') if text else '', encoding='utf-8')" "$notes_file"
             echo "Секция для v${VERSION} найдена в CHANGELOG.md."
           else
             # Fallback: короткое авто-описание, если секции нет.
