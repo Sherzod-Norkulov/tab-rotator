@@ -149,7 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
       nextMode = 'auto';
     }
     applyThemeMode(nextMode);
-    await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' ? true : false });
+    await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' });
   });
 
   const handleSystemThemeChange = () => {
@@ -284,9 +284,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const rotateCheckbox = document.createElement('input');
+    const rotateEnabled = shouldRotateEntry(entry);
     rotateCheckbox.type = 'checkbox';
     rotateCheckbox.dataset.role = 'rotate';
-    rotateCheckbox.checked = shouldRotateEntry(entry);
+    rotateCheckbox.checked = rotateEnabled;
     rotateCheckbox.style.gridArea = 'ocheck';
     rotateCheckbox.style.justifySelf = 'end';
     const rotateLabel = document.createElement('span');
@@ -393,7 +394,7 @@ document.addEventListener('DOMContentLoaded', () => {
         createEntryRow({
           url: typeof entry === 'string' ? entry : entry.url,
           name: typeof entry === 'object' && entry.name ? entry.name : '',
-          rotate: shouldRotateEntry(entry),
+          rotate: typeof entry === 'object' ? shouldRotateEntry(entry) : true,
           refresh: typeof entry === 'object' && entry.refresh,
           refreshDelaySec:
             typeof entry === 'object' && Number.isFinite(entry.refreshDelaySec) && entry.refreshDelaySec >= 0
