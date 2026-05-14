@@ -124,15 +124,21 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.dataset.theme = themeMode;
   }
 
+  function resolveStoredThemeMode(data = {}) {
+    if (VALID_THEME_MODES.includes(data.themeMode)) {
+      return data.themeMode;
+    }
+    if (data.darkMode === true) {
+      return 'dark';
+    }
+    if (data.darkMode === false) {
+      return 'light';
+    }
+    return 'auto';
+  }
+
   storageArea.get(['darkMode', 'themeMode'], (data) => {
-    const storedMode = VALID_THEME_MODES.includes(data.themeMode)
-      ? data.themeMode
-      : data.darkMode === true
-        ? 'dark'
-        : data.darkMode === false
-          ? 'light'
-          : 'auto';
-    applyThemeMode(storedMode);
+    applyThemeMode(resolveStoredThemeMode(data));
   });
 
   darkModeToggleBtn?.addEventListener('click', async () => {
@@ -143,7 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
       nextMode = 'auto';
     }
     applyThemeMode(nextMode);
-    await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' });
+    await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' ? true : false });
   });
 
   const handleSystemThemeChange = () => {
@@ -410,7 +416,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .map((row) => {
         const url = row.querySelector('.entry-url').value.trim();
         let name = row.querySelector('.entry-name').value.trim();
-        const rotate = row.querySelector('input[data-role="rotate"]')?.checked !== false;
+        const rotate = row.querySelector('input[data-role="rotate"]')?.checked ?? true;
         const refresh = row.querySelector('input[data-role="refresh"]').checked;
         const numberInputs = row.querySelectorAll('input[type="number"]');
         const refreshDelayInput = numberInputs[0];
@@ -769,8 +775,10 @@ document.addEventListener('DOMContentLoaded', () => {
         isInitializing = false;
       };
 
-      finishInit().catch(() => {
+      finishInit().catch((error) => {
+        console.error('Failed to initialize popup settings:', error);
         applyConfig(baseConfig, true);
+        setStatus(t('status_open_tabs_load_fail'), 'error');
         setRunningUi(Boolean(data.isRunning));
         isInitializing = false;
       });
