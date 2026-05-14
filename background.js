@@ -28,6 +28,8 @@ const IDLE_DETECTION_THRESHOLD_SEC = 60;
 const PAUSE_CHECK_INTERVAL_MS = 1000;
 const PAUSE_BADGE_TEXT = '⏸';
 const MANAGEABLE_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+const COMMAND_TOGGLE_ROTATION = 'toggle-rotation';
+const COMMAND_STOP_ROTATION = 'stop-rotation';
 // In MV3 service workers, chrome.runtime.getManifest() is available synchronously.
 // Keep a defensive fallback ('0.0.0') only for unexpected early execution; we no
 // longer hard-code a second copy of the release version here — that was a source
@@ -600,6 +602,7 @@ async function rotateTabs() {
         // Respect per-entry rotation toggles: do not fall back to all tabs when
         // the custom list has fewer than two enabled rotation candidates. This
         // stops rotation instead of leaving a false "running" state.
+        // saveState=true persists isRunning=false so popup/storage recover cleanly.
         await stopRotator(true);
         return;
       }
@@ -1033,12 +1036,12 @@ chrome.runtime.onStartup.addListener(() => {
 setTimeout(() => restoreFromStorage(), 0);
 
 chrome.commands?.onCommand?.addListener((command) => {
-  if (!['stop-rotation', 'toggle-rotation'].includes(command) || explicitCommandInProgress) {
+  if (![COMMAND_STOP_ROTATION, COMMAND_TOGGLE_ROTATION].includes(command) || explicitCommandInProgress) {
     return;
   }
   explicitCommandInProgress = true;
   (async () => {
-    if (command === 'stop-rotation') {
+    if (command === COMMAND_STOP_ROTATION) {
       await stopRotator();
       return;
     }

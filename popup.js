@@ -39,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const refreshTasksContainer = document.getElementById('refreshTasks');
   const storageArea = chrome.storage.local;
   const VALID_THEME_MODES = ['light', 'dark', 'auto'];
+  const MANAGEABLE_PROTOCOLS = ['http:', 'https:', 'file:'];
   const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   let profiles = [];
   let refreshTasks = [];
@@ -140,6 +141,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function deepClone(value) {
+    // Extension configs are intentionally JSON-serializable storage payloads.
+    // The fallback is safe for this data model and avoids adding dependencies.
     return typeof structuredClone === 'function'
       ? structuredClone(value)
       : JSON.parse(JSON.stringify(value));
@@ -527,11 +530,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     try {
       const parsed = new URL(candidate);
-      return ['http:', 'https:', 'file:'].includes(parsed.protocol);
+      return MANAGEABLE_PROTOCOLS.includes(parsed.protocol);
     } catch (e) {
       try {
         const parsed = new URL(`https://${candidate}`);
-        return ['http:', 'https:', 'file:'].includes(parsed.protocol);
+        return MANAGEABLE_PROTOCOLS.includes(parsed.protocol);
       } catch (error) {
         return false;
       }
@@ -808,9 +811,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       finishInit().catch((error) => {
         console.error('Failed to initialize popup settings:', error);
+        // Recover to the storage-backed base config even if first-run tab preload fails.
         applyConfig(baseConfig, true);
         setStatus(t('status_init_fail'), 'error');
-        setRunningUi(Boolean(data.isRunning));
+        setRunningUi(Boolean(data?.isRunning));
         isInitializing = false;
       });
     }
@@ -1053,6 +1057,7 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       name = profiles[idx].name || `profile-${idx + 1}`;
     } else {
+      // No selected profile means "export current form state" as a portable backup.
       payload = {
         current: getCurrentConfig()
       };
