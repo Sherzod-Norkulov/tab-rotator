@@ -126,16 +126,17 @@ function normalizeEntries(entries) {
   for (const entry of entries) {
     let normalizedEntry;
     if (typeof entry === 'string') {
-      normalizedEntry = { url: entry.trim(), name: '', refresh: false, intervalSec: null, refreshDelaySec: 0 };
+      normalizedEntry = { url: entry.trim(), name: '', rotate: true, refresh: false, intervalSec: null, refreshDelaySec: 0 };
     } else {
       const url = typeof entry?.url === 'string' ? entry.url.trim() : '';
       const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+      const rotate = entry?.rotate !== false;
       const refresh = Boolean(entry?.refresh);
       const intervalRaw = Number(entry?.intervalSec);
       const intervalSec = Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : null;
       const refreshDelayRaw = Number(entry?.refreshDelaySec);
       const refreshDelaySec = Number.isFinite(refreshDelayRaw) && refreshDelayRaw >= 0 ? refreshDelayRaw : 0;
-      normalizedEntry = { url, name, refresh, intervalSec, refreshDelaySec };
+      normalizedEntry = { url, name, rotate, refresh, intervalSec, refreshDelaySec };
     }
 
     if (!normalizedEntry.url.length) continue;
@@ -373,6 +374,10 @@ async function prepareCustomTargets(entries, openMissing) {
   const usedIds = new Set();
 
   for (const entry of normalized) {
+    if (entry.rotate === false) {
+      continue;
+    }
+
     const { url, refresh } = entry;
     const normalizedUrl = normalizedMatchUrl(url);
 
@@ -442,6 +447,10 @@ function buildCandidatesFromCustomEntries(tabs) {
   const candidates = [];
 
   for (const entry of currentSettings.customEntries) {
+    if (entry.rotate === false) {
+      continue;
+    }
+
     const targetUrl = normalizedMatchUrl(entry.url);
     const found = tabs.find((t) => {
       const candidateUrls = [];
@@ -564,6 +573,10 @@ async function rotateTabs() {
     }
 
     const excluded = parseExcludedDomains(currentSettings.excludeDomains);
+
+    if (currentSettings.useCustomList && candidates.length < 2) {
+      return;
+    }
 
     if (candidates.length < 2) {
       candidates = tabs

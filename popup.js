@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status');
   const openInWindowBtn = document.getElementById('openInWindow');
   const darkModeToggleBtn = document.getElementById('darkModeToggle');
+  const loadOpenTabsBtn = document.getElementById('loadOpenTabs');
   const autoStartCheckbox = document.getElementById('autoStart');
   const pausePolicySelect = document.getElementById('pausePolicy');
   const useCustomListCheckbox = document.getElementById('useCustomList');
@@ -45,6 +46,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let autoPersistTimer = null;
   let defaultConfigCache = null;
   let isInitializing = true;
+  let themeMode = 'auto';
+  const systemTheme = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
   const t = (key, args = []) => {
     const msg = chrome.i18n?.getMessage ? chrome.i18n.getMessage(key, args) : '';
@@ -108,21 +111,39 @@ document.addEventListener('DOMContentLoaded', () => {
       footerVersionEl.textContent = t('footer_version', [version]);
     }
   }
-  function applyDarkMode(enabled) {
-    document.body.classList.toggle('dark', Boolean(enabled));
+  function applyThemeMode(mode = 'auto') {
+    themeMode = ['light', 'dark', 'auto'].includes(mode) ? mode : 'auto';
+    const enabled = themeMode === 'dark' || (themeMode === 'auto' && Boolean(systemTheme?.matches));
     if (darkModeToggleBtn) {
-      darkModeToggleBtn.textContent = enabled ? '☀' : '☾';
+      darkModeToggleBtn.textContent = themeMode === 'auto' ? '◐' : enabled ? '☀' : '☾';
+      darkModeToggleBtn.title = t(`theme_${themeMode}`);
+      darkModeToggleBtn.setAttribute('aria-label', t(`theme_${themeMode}`));
     }
+    document.body.classList.toggle('dark', enabled);
+    document.body.dataset.theme = themeMode;
   }
 
-  storageArea.get(['darkMode'], (data) => {
-    applyDarkMode(Boolean(data.darkMode));
+  storageArea.get(['darkMode', 'themeMode'], (data) => {
+    const storedMode = ['light', 'dark', 'auto'].includes(data.themeMode)
+      ? data.themeMode
+      : data.darkMode === true
+        ? 'dark'
+        : data.darkMode === false
+          ? 'light'
+          : 'auto';
+    applyThemeMode(storedMode);
   });
 
   darkModeToggleBtn?.addEventListener('click', async () => {
-    const enabled = !document.body.classList.contains('dark');
-    applyDarkMode(enabled);
-    await storageArea.set({ darkMode: enabled });
+    const nextMode = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'auto' : 'light';
+    applyThemeMode(nextMode);
+    await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' });
+  });
+
+  systemTheme?.addEventListener?.('change', () => {
+    if (themeMode === 'auto') {
+      applyThemeMode('auto');
+    }
   });
 
   if (openInWindowBtn) {
@@ -246,6 +267,17 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshDelayInput.classList.add(refreshDelayInput.disabled ? 'field-disabled' : 'field-enabled');
     });
 
+    const rotateCheckbox = document.createElement('input');
+    rotateCheckbox.type = 'checkbox';
+    rotateCheckbox.dataset.role = 'rotate';
+    rotateCheckbox.checked = entry.rotate !== false;
+    rotateCheckbox.style.gridArea = 'ocheck';
+    rotateCheckbox.style.justifySelf = 'end';
+    const rotateLabel = document.createElement('span');
+    rotateLabel.className = 'control-label';
+    rotateLabel.style.gridArea = 'olabel';
+    rotateLabel.textContent = t('entry_rotate');
+
     const timerCheckbox = document.createElement('input');
     timerCheckbox.type = 'checkbox';
     timerCheckbox.dataset.role = 'timer-toggle';
@@ -295,7 +327,7 @@ document.addEventListener('DOMContentLoaded', () => {
       schedulePersist(parseProfileIndex(profileSelect.value));
     });
 
-    controls.append(refreshCheckbox, refreshLabel, refreshDelayWrap, timerCheckbox, timerLabel, timerWrap, removeBtn);
+    controls.append(rotateCheckbox, rotateLabel, refreshCheckbox, refreshLabel, refreshDelayWrap, timerCheckbox, timerLabel, timerWrap, removeBtn);
     row.append(order, nameInput, urlInput, controls);
 
     upBtn.addEventListener('click', () => moveRow(row, -1));
@@ -345,6 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
         createEntryRow({
           url: typeof entry === 'string' ? entry : entry.url,
           name: typeof entry === 'object' && entry.name ? entry.name : '',
+          rotate: typeof entry === 'object' ? entry.rotate !== false : true,
           refresh: typeof entry === 'object' && entry.refresh,
           refreshDelaySec:
             typeof entry === 'object' && Number.isFinite(entry.refreshDelaySec) && entry.refreshDelaySec >= 0
@@ -367,6 +400,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .map((row) => {
         const url = row.querySelector('.entry-url').value.trim();
         let name = row.querySelector('.entry-name').value.trim();
+        const rotate = row.querySelector('input[data-role="rotate"]')?.checked !== false;
         const refresh = row.querySelector('input[data-role="refresh"]').checked;
         const numberInputs = row.querySelectorAll('input[type="number"]');
         const refreshDelayInput = numberInputs[0];
@@ -383,7 +417,7 @@ document.addEventListener('DOMContentLoaded', () => {
           name = url;
         }
 
-        return { url, name, refresh, refreshDelaySec, intervalSec };
+        return { url, name, rotate, refresh, refreshDelaySec, intervalSec };
       })
       .filter((item) => item.url);
   }
@@ -444,6 +478,51 @@ document.addEventListener('DOMContentLoaded', () => {
       activeTabInfo = tab?.url ? { url: tab.url, title: tab.title || tab.url } : null;
       activeTabUrlEl.textContent = activeTabInfo?.url || t('status_refresh_no_tab');
     });
+  }
+
+  function entryFromTab(tab) {
+    const url = tab?.pendingUrl || tab?.url || '';
+    if (!url) return null;
+    return {
+      url,
+      name: tab.title || url,
+      rotate: true,
+      refresh: false,
+      refreshDelaySec: 0,
+      intervalSec: null
+    };
+  }
+
+  function getOpenTabEntries() {
+    return new Promise((resolve) => {
+      chrome.tabs.query({ currentWindow: true }, (tabs) => {
+        const seen = new Set();
+        const entries = (tabs || [])
+          .map(entryFromTab)
+          .filter((entry) => {
+            if (!entry || seen.has(entry.url)) return false;
+            seen.add(entry.url);
+            return true;
+          });
+        resolve(entries);
+      });
+    });
+  }
+
+  async function loadOpenTabsIntoList({ persist = true } = {}) {
+    const entries = await getOpenTabEntries();
+    if (!entries.length) {
+      setStatus(t('status_open_tabs_empty'), 'error');
+      return [];
+    }
+    useCustomListCheckbox.checked = true;
+    fillEntries(entries);
+    toggleCustomControls();
+    if (persist && !isInitializing) {
+      await persistCurrentFormState(parseProfileIndex(profileSelect.value));
+      setStatus(t('status_open_tabs_loaded', [entries.length]), 'ok');
+    }
+    return entries;
   }
 
   function normalizeTaskUrl(url) {
@@ -556,6 +635,10 @@ document.addEventListener('DOMContentLoaded', () => {
     schedulePersist(parseProfileIndex(profileSelect.value));
   });
 
+  loadOpenTabsBtn?.addEventListener('click', () => {
+    loadOpenTabsIntoList().catch(() => setStatus(t('status_open_tabs_load_fail'), 'error'));
+  });
+
   excludeToggle.addEventListener('change', toggleExcludeControls);
 
   function renderProfiles() {
@@ -643,23 +726,40 @@ document.addEventListener('DOMContentLoaded', () => {
         : configFromData(data);
       defaultConfigCache = baseConfig;
 
-      if (storedProfileIndex >= 0 && storedProfileIndex < profiles.length) {
-        profileSelect.value = String(storedProfileIndex);
-        lastSelectedProfileIndex = storedProfileIndex;
-        applyConfig(profiles[storedProfileIndex].config, true);
-      } else {
-        profileSelect.value = '';
-        lastSelectedProfileIndex = NO_PROFILE_SELECTED;
-        applyConfig(baseConfig, true);
-      }
+      const finishInit = async () => {
+        if (storedProfileIndex >= 0 && storedProfileIndex < profiles.length) {
+          profileSelect.value = String(storedProfileIndex);
+          lastSelectedProfileIndex = storedProfileIndex;
+          applyConfig(profiles[storedProfileIndex].config, true);
+        } else {
+          profileSelect.value = '';
+          lastSelectedProfileIndex = NO_PROFILE_SELECTED;
+          if (!baseConfig.customEntries.length) {
+            const openEntries = await getOpenTabEntries();
+            if (openEntries.length) {
+              baseConfig.customEntries = openEntries;
+              baseConfig.useCustomList = true;
+              defaultConfigCache = { ...baseConfig };
+              await storageArea.set({ defaultConfig: { ...baseConfig } });
+            }
+          }
+          applyConfig(baseConfig, true);
+        }
 
-      if (data.isRunning) {
-        setStatus(t('status_rotation_running'), 'ok');
-      } else {
-        setStatus(t('status_rotation_stopped'), 'error');
-      }
-      setRunningUi(Boolean(data.isRunning));
-      isInitializing = false;
+        if (data.isRunning) {
+          setStatus(t('status_rotation_running'), 'ok');
+        } else {
+          setStatus(t('status_rotation_stopped'), 'error');
+        }
+        setRunningUi(Boolean(data.isRunning));
+        isInitializing = false;
+      };
+
+      finishInit().catch(() => {
+        applyConfig(baseConfig, true);
+        setRunningUi(Boolean(data.isRunning));
+        isInitializing = false;
+      });
     }
   );
 
@@ -914,11 +1014,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!raw || typeof raw !== 'object') return null;
     const url = safeStr(raw.url).trim();
     if (!url) return null;
-    const entry = {
-      url,
-      name: safeStr(raw.name, IMPORT_MAX_NAME_LEN).trim(),
-      refresh: Boolean(raw.refresh)
-    };
+      const entry = {
+        url,
+        name: safeStr(raw.name, IMPORT_MAX_NAME_LEN).trim(),
+        rotate: raw.rotate !== false,
+        refresh: Boolean(raw.refresh)
+      };
     const intervalRaw = Number(raw.intervalSec);
     entry.intervalSec = Number.isFinite(intervalRaw) && intervalRaw >= 1 ? intervalRaw : null;
     const delayRaw = Number(raw.refreshDelaySec);

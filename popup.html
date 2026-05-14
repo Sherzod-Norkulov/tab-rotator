@@ -6,26 +6,26 @@
   <title>Tab Rotator</title>
   <style>
     :root {
-      --bg: #f7f8fc;
-      --panel: #ffffff;
-      --border: #e5e8f0;
-      --accent: #7c9cf5;
-      --accent-strong: #6a8af0;
-      --accent-soft: #e9edff;
+      --bg: #faf7f2;
+      --panel: rgba(255, 255, 255, 0.94);
+      --border: #eadfd2;
+      --accent: #c9a7eb;
+      --accent-strong: #9f86d9;
+      --accent-soft: #f2ecfa;
       --text: #1f2937;
       --muted: #6b7280;
       --error: #e45858;
       --ok: #1fa97a;
-      --shadow: 0 10px 28px rgba(76, 103, 186, 0.18);
+      --shadow: 0 8px 22px rgba(166, 137, 109, 0.14);
     }
 
     body.dark {
-      --bg: #0f172a;
-      --panel: #111827;
-      --border: #334155;
-      --accent: #60a5fa;
-      --accent-strong: #3b82f6;
-      --accent-soft: #1e293b;
+      --bg: #171724;
+      --panel: #212131;
+      --border: #3d3a4d;
+      --accent: #b99ee8;
+      --accent-strong: #d6bcfa;
+      --accent-soft: #2c2a3d;
       --text: #e5e7eb;
       --muted: #94a3b8;
       --error: #f87171;
@@ -37,26 +37,26 @@
 
     body {
       margin: 0;
-      padding: 10px;
+      padding: 8px;
       font-family: "Inter", "Segoe UI", "Roboto", sans-serif;
       background: radial-gradient(circle at 12% 16%, rgba(124, 156, 245, 0.22), transparent 32%),
-                  radial-gradient(circle at 82% 8%, rgba(147, 197, 253, 0.18), transparent 32%),
-                  radial-gradient(circle at 76% 72%, rgba(76, 201, 240, 0.16), transparent 32%),
+                  radial-gradient(circle at 82% 8%, rgba(244, 194, 194, 0.2), transparent 32%),
+                  radial-gradient(circle at 76% 72%, rgba(186, 230, 253, 0.16), transparent 32%),
                   var(--bg);
       color: var(--text);
       min-width: 320px;
-      max-width: 400px;
+      max-width: 380px;
     }
 
-    h1 { margin: 0 0 6px; font-size: 18px; letter-spacing: 0.2px; }
-    .subtitle { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+    h1 { margin: 0 0 4px; font-size: 17px; letter-spacing: 0.2px; }
+    .subtitle { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
 
     .card {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 10px;
-      margin-top: 8px;
+      border-radius: 12px;
+      padding: 8px;
+      margin-top: 7px;
       box-shadow: var(--shadow);
     }
 
@@ -65,8 +65,8 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      margin-bottom: 8px;
-      font-size: 13px;
+      margin-bottom: 6px;
+      font-size: 12px;
     }
 
     label .title { flex: 1; white-space: nowrap; }
@@ -78,9 +78,9 @@
     }
 
     input[type="number"] {
-      width: 100px;
-      padding: 8px 10px;
-      border-radius: 12px;
+      width: 82px;
+      padding: 6px 8px;
+      border-radius: 10px;
       border: 1px solid var(--border);
       background: var(--accent-soft);
       color: var(--text);
@@ -97,11 +97,11 @@
       border-color: var(--border);
     }
 
-    .actions { display: flex; gap: 10px; margin-top: 12px; }
+    .actions { display: flex; gap: 8px; margin-top: 8px; }
 
     button {
       flex: 1;
-      padding: 10px 12px;
+      padding: 8px 10px;
       border: none;
       border-radius: 12px;
       cursor: pointer;
@@ -120,8 +120,8 @@
       box-shadow: 0 10px 24px rgba(124, 156, 245, 0.35);
     }
 
-    button.secondary { background: #f1f5f9; color: var(--text); border: 1px solid var(--border); }
-    button.small { flex: 0; padding: 8px 10px; font-weight: 600; }
+    button.secondary { background: #f8f1e9; color: var(--text); border: 1px solid var(--border); }
+    button.small { flex: 0; padding: 6px 8px; font-weight: 600; }
     button:hover { transform: translateY(-1px); }
     button:disabled {
       background: #e5e7eb !important;
@@ -145,13 +145,13 @@
       position: sticky;
       top: 0;
       z-index: 50;
-      background: rgba(247, 248, 252, 0.96);
+      background: color-mix(in srgb, var(--bg) 94%, white);
       backdrop-filter: blur(8px);
       margin: -10px -10px 0;
-      padding: 10px 10px 8px;
+      padding: 8px 8px 7px;
       border-bottom: 1px solid var(--border);
       box-shadow: 0 6px 12px rgba(76, 103, 186, 0.08);
-      border-radius: 0 0 14px 14px;
+      border-radius: 0 0 12px 12px;
     }
 
     .sticky-top {
@@ -227,14 +227,14 @@
     /* Entries */
     .entry {
       display: grid;
-      grid-template-columns: 64px 1fr;
+      grid-template-columns: 54px 1fr;
       grid-template-areas:
         "order name"
         "url url"
         "controls controls";
       gap: 6px;
       align-items: center;
-      padding: 10px;
+      padding: 8px;
       border: 1px solid var(--border);
       border-radius: 12px;
       background: var(--accent-soft);
@@ -244,7 +244,7 @@
     .entry input[type="text"] {
       width: 100%;
       min-width: 0;
-      padding: 10px 12px;
+      padding: 7px 9px;
       border-radius: 10px;
       border: 1px solid var(--border);
       background: #fff;
@@ -295,15 +295,16 @@
       grid-area: controls;
       display: grid;
       grid-template-columns: 1fr auto auto;
-      grid-template-rows: auto auto auto;
-      gap: 8px 10px;
+      grid-template-rows: auto auto auto auto;
+      gap: 6px 8px;
       align-items: center;
       grid-template-areas:
+        "olabel . ocheck"
         "rlabel rinput rcheck"
         "tlabel tinput tcheck"
         "remove remove remove";
     }
-    .control-label { font-size: 13px; color: var(--text); }
+    .control-label { font-size: 12px; color: var(--text); }
     .suffix-input {
       position: relative;
       display: inline-flex;
@@ -444,7 +445,7 @@
 
     .import-btn input[type="file"] { display: none; }
     .import-btn {
-      background: #f1f5f9;
+      background: #f8f1e9;
       border: 1px solid var(--border);
       color: var(--text);
     }
@@ -453,7 +454,7 @@
       flex: 1;
       min-width: 40px;
       max-width: 40px;
-      height: 36px;
+      height: 32px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -461,7 +462,7 @@
       line-height: 1;
       padding: 0;
       border-radius: 10px;
-      background: #f1f5f9;
+      background: #f8f1e9;
       border: 1px solid var(--border);
       color: var(--text);
     }
@@ -471,7 +472,7 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-height: 120px;
+      max-height: 112px;
       overflow: auto;
     }
 
@@ -519,7 +520,15 @@
     #addEntry {
       padding: 6px 10px;
       font-size: 13px;
-      margin-bottom: 10px;
+    }
+
+    .compact-actions {
+      margin: 0 0 8px;
+    }
+
+    .compact-actions button {
+      flex: 1;
+      font-size: 12px;
     }
   </style>
 </head>
@@ -607,12 +616,15 @@
     </label>
 
     <div id="entries"></div>
-    <button id="addEntry" class="secondary small">
-      <span class="btn-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-dasharray="16" stroke-dashoffset="16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M5 12h14"><animate fill="freeze" attributeName="stroke-dashoffset" dur="0.4s" values="16;0"/></path><path d="M12 5v14"><animate fill="freeze" attributeName="stroke-dashoffset" begin="0.4s" dur="0.4s" values="16;0"/></path></g></svg>
-      </span>
-      <span data-i18n="button_add_entry"></span>
-    </button>
+    <div class="actions compact-actions">
+      <button id="addEntry" class="secondary small">
+        <span class="btn-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-dasharray="16" stroke-dashoffset="16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M5 12h14"><animate fill="freeze" attributeName="stroke-dashoffset" dur="0.4s" values="16;0"/></path><path d="M12 5v14"><animate fill="freeze" attributeName="stroke-dashoffset" begin="0.4s" dur="0.4s" values="16;0"/></path></g></svg>
+        </span>
+        <span data-i18n="button_add_entry"></span>
+      </button>
+      <button id="loadOpenTabs" class="secondary small" data-i18n="button_load_open_tabs"></button>
+    </div>
 
     <div class="inline-controls" style="flex-direction:column; gap:10px; margin-top:6px;">
       <div class="inline-pair">
