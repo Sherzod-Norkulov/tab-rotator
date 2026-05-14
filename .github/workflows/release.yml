@@ -141,8 +141,13 @@ jobs:
         run: |
           set -euo pipefail
           zip_path="dist/tab-rotator-${VERSION}.zip"
+          if [[ ! -f "$zip_path" ]]; then
+            echo "::error::Артефакт не найден: $zip_path"
+            ls -la dist || true
+            exit 1
+          fi
           if [[ ! -s "$zip_path" ]]; then
-            echo "::error::Артефакт не найден или пуст: $zip_path"
+            echo "::error::Артефакт пуст: $zip_path"
             ls -la dist || true
             exit 1
           fi
