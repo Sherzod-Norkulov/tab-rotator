@@ -599,7 +599,8 @@ async function rotateTabs() {
       if (currentSettings.useCustomList) {
         // Respect per-entry rotation toggles: do not fall back to all tabs when
         // the custom list has fewer than two enabled rotation candidates. This
-        // intentionally leaves rotation idle until the user enables more entries.
+        // stops rotation instead of leaving a false "running" state.
+        await stopRotator(true);
         return;
       }
       candidates = tabs
@@ -609,6 +610,7 @@ async function rotateTabs() {
         })
         .map((t) => ({ tab: t, refresh: false, intervalSec: null }));
       if (candidates.length < 2) {
+        await stopRotator(true);
         return;
       }
     }
@@ -1031,14 +1033,25 @@ chrome.runtime.onStartup.addListener(() => {
 setTimeout(() => restoreFromStorage(), 0);
 
 chrome.commands?.onCommand?.addListener((command) => {
-  if (command === 'stop-rotation') {
-    stopRotator().catch((err) => console.error('Command stop failed:', err));
+  if (!['stop-rotation', 'toggle-rotation'].includes(command) || explicitCommandInProgress) {
     return;
   }
-  if (command === 'toggle-rotation') {
-    const action = isRunning ? stopRotator() : startRotator(currentSettings);
-    action.catch((err) => console.error('Command toggle failed:', err));
-  }
+  explicitCommandInProgress = true;
+  (async () => {
+    if (command === 'stop-rotation') {
+      await stopRotator();
+      return;
+    }
+    if (isRunning) {
+      await stopRotator();
+    } else {
+      await startRotator(currentSettings);
+    }
+  })()
+    .catch((err) => console.error('Command failed:', err))
+    .finally(() => {
+      explicitCommandInProgress = false;
+    });
 });
 
 chrome.runtime.onConnect.addListener((port) => {

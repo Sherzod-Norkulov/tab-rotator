@@ -38,6 +38,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const resetRefreshTasksBtn = document.getElementById('resetRefreshTasks');
   const refreshTasksContainer = document.getElementById('refreshTasks');
   const storageArea = chrome.storage.local;
+  const VALID_THEME_MODES = ['light', 'dark', 'auto'];
+  const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   let profiles = [];
   let refreshTasks = [];
   let activeTabInfo = null;
@@ -47,9 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let autoPersistTimer = null;
   let defaultConfigCache = null;
   let isInitializing = true;
-  const VALID_THEME_MODES = ['light', 'dark', 'auto'];
   let themeMode = 'auto';
-  const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
   const t = (key, args = []) => {
     const msg = chrome.i18n?.getMessage ? chrome.i18n.getMessage(key, args) : '';
@@ -802,7 +802,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
           setStatus(t('status_rotation_stopped'), 'error');
         }
-        setRunningUi(Boolean(data.isRunning));
+        setRunningUi(Boolean(data?.isRunning));
         isInitializing = false;
       };
 
