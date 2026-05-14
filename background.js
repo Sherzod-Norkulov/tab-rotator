@@ -746,6 +746,13 @@ async function startRotator(options = {}) {
       : normalized.allowRotationWhilePopupOpen
   );
 
+  if (
+    normalized.useCustomList &&
+    normalized.customEntries.filter((entry) => entry.rotate !== false && isManageableUrl(entry.url)).length < 2
+  ) {
+    return failStartNotEnoughTargets();
+  }
+
   if (!normalized.useCustomList) {
     normalized.openCustomTabs = false;
     normalized.enableRefreshFlags = false;
@@ -1041,7 +1048,10 @@ chrome.runtime.onStartup.addListener(() => {
 setTimeout(() => restoreFromStorage(), 0);
 
 chrome.commands?.onCommand?.addListener((command) => {
-  if (![COMMAND_STOP_ROTATION, COMMAND_TOGGLE_ROTATION].includes(command) || explicitCommandInProgress) {
+  if (explicitCommandInProgress) {
+    return;
+  }
+  if (![COMMAND_STOP_ROTATION, COMMAND_TOGGLE_ROTATION].includes(command)) {
     return;
   }
   explicitCommandInProgress = true;

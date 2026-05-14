@@ -116,7 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function applyThemeMode(mode = 'auto') {
     themeMode = VALID_THEME_MODES.includes(mode) ? mode : 'auto';
-    const prefersDark = Boolean(systemThemeQuery?.matches);
+    const prefersDark = systemThemeQuery ? systemThemeQuery.matches : false;
     const enabled = themeMode === 'dark' || (themeMode === 'auto' && prefersDark);
     if (darkModeToggleBtn) {
       darkModeToggleBtn.textContent = themeMode === 'auto' ? '◐' : enabled ? '☀' : '☾';
@@ -508,9 +508,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function loadActiveTab() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs?.[0];
-      activeTabInfo = tab?.url && isManageableUrl(tab.url) ? { url: tab.url, title: tab.title || tab.url } : null;
+      const url = getTabUrl(tab);
+      activeTabInfo = url && isManageableUrl(url) ? { url, title: tab.title || url } : null;
       activeTabUrlEl.textContent = activeTabInfo?.url || t('status_refresh_no_tab');
     });
+  }
+
+  function getTabUrl(tab) {
+    return tab?.pendingUrl || tab?.url || '';
   }
 
   /**
@@ -518,7 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
    * Returns null for internal/browser URLs that the extension should not manage.
    */
   function entryFromTab(tab) {
-    const url = tab?.pendingUrl || tab?.url || '';
+    const url = getTabUrl(tab);
     if (!isManageableUrl(url)) return null;
     return {
       url,
