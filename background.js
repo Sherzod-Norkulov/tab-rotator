@@ -445,6 +445,12 @@ function persistState(extra = {}) {
   });
 }
 
+async function failStartNotEnoughTargets() {
+  chrome.action.setIcon({ path: iconOff }).catch(() => {});
+  await persistState({ isRunning: false });
+  return { ok: false, error: 'NOT_ENOUGH_TARGETS' };
+}
+
 function buildCandidatesFromCustomEntries(tabs) {
   if (!currentSettings.useCustomList || !currentSettings.customEntries.length) {
     return [];
@@ -489,10 +495,10 @@ function buildCandidatesFromCustomEntries(tabs) {
     for (const rt of rotationTargets) {
       const tab = tabMap.get(rt.tabId);
       if (
-          tab &&
-          !usedIds.has(tab.id) &&
-          isManageableUrl(typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url) &&
-          !isExcluded(
+        tab &&
+        !usedIds.has(tab.id) &&
+        isManageableUrl(typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url) &&
+        !isExcluded(
           typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url,
           excluded
         )
@@ -755,9 +761,7 @@ async function startRotator(options = {}) {
     : [];
 
   if (normalized.useCustomList && rotationTargets.length < 2) {
-    chrome.action.setIcon({ path: iconOff }).catch(() => {});
-    await persistState({ isRunning: false });
-    return { ok: false, error: 'NOT_ENOUGH_TARGETS' };
+    return failStartNotEnoughTargets();
   }
 
   if (!normalized.useCustomList) {
@@ -768,9 +772,7 @@ async function startRotator(options = {}) {
       return isManageableUrl(url) && !isExcluded(url, excluded);
     });
     if (candidates.length < 2) {
-      chrome.action.setIcon({ path: iconOff }).catch(() => {});
-      await persistState({ isRunning: false });
-      return { ok: false, error: 'NOT_ENOUGH_TARGETS' };
+      return failStartNotEnoughTargets();
     }
   }
 

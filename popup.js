@@ -115,9 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function applyThemeMode(mode = 'auto') {
     themeMode = VALID_THEME_MODES.includes(mode) ? mode : 'auto';
-    const prefersDark = window.matchMedia
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches
-      : Boolean(systemThemeQuery?.matches);
+    const prefersDark = Boolean(systemThemeQuery?.matches);
     const enabled = themeMode === 'dark' || (themeMode === 'auto' && prefersDark);
     if (darkModeToggleBtn) {
       darkModeToggleBtn.textContent = themeMode === 'auto' ? '◐' : enabled ? '☀' : '☾';
@@ -139,6 +137,12 @@ document.addEventListener('DOMContentLoaded', () => {
       return 'light';
     }
     return 'auto';
+  }
+
+  function deepClone(value) {
+    return typeof structuredClone === 'function'
+      ? structuredClone(value)
+      : JSON.parse(JSON.stringify(value));
   }
 
   storageArea.get(['darkMode', 'themeMode'], (data) => {
@@ -288,10 +292,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const rotateCheckbox = document.createElement('input');
-    const rotateEnabled = shouldRotateEntry(entry);
     rotateCheckbox.type = 'checkbox';
     rotateCheckbox.dataset.role = 'rotate';
-    rotateCheckbox.checked = rotateEnabled;
+    rotateCheckbox.checked = shouldRotateEntry(entry);
     rotateCheckbox.style.gridArea = 'ocheck';
     rotateCheckbox.style.justifySelf = 'end';
     const rotateLabel = document.createElement('span');
@@ -787,9 +790,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (openEntries.length) {
               baseConfig.customEntries = openEntries;
               baseConfig.useCustomList = true;
-              defaultConfigCache = typeof structuredClone === 'function'
-                ? structuredClone(baseConfig)
-                : JSON.parse(JSON.stringify(baseConfig));
+              defaultConfigCache = deepClone(baseConfig);
               await storageArea.set({ defaultConfig: defaultConfigCache });
             }
           }
@@ -942,9 +943,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const source = profiles[idx];
     const copyName = t('profile_copy_name', [source.name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`]);
-    const clonedConfig = typeof structuredClone === 'function'
-      ? structuredClone(source.config)
-      : JSON.parse(JSON.stringify(source.config));
+    const clonedConfig = deepClone(source.config);
     profiles.push({ name: copyName, config: clonedConfig });
     renderProfiles();
     const selectedIdx = profiles.length - 1;
