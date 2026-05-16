@@ -1,3 +1,5 @@
+const ext = globalThis.browser || globalThis.chrome;
+
 let timerId = null;
 let intervalMs = 5000;
 let isRunning = false;
@@ -12,7 +14,9 @@ let pausedSettingsSnapshot = null;
 let ensuredWindowId = null;
 let badgeTimer = null;
 let pauseReason = null;
+let rotationTickInProgress = false;
 const refreshTaskTimers = new Map();
+const refreshTasksInProgress = new Set();
 const iconOn = {
   "16": "assets/icons/icon-on-icon16.png",
   "48": "assets/icons/icon-on-icon48.png",
@@ -23,21 +27,24 @@ const iconOff = {
   "48": "assets/icons/icon-off-icon48.png",
   "128": "assets/icons/icon-off-icon128.png"
 };
-const storageArea = chrome.storage.local;
+const storageArea = ext.storage.local;
 const IDLE_DETECTION_THRESHOLD_SEC = 60;
 const PAUSE_CHECK_INTERVAL_MS = 1000;
 const PAUSE_BADGE_TEXT = '⏸';
 const MANAGEABLE_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const COMMAND_TOGGLE_ROTATION = 'toggle-rotation';
 const COMMAND_STOP_ROTATION = 'stop-rotation';
-// In MV3 service workers, chrome.runtime.getManifest() is available synchronously.
+const ROTATION_ALARM_NAME = 'tab-rotator:rotation-tick';
+const REFRESH_ALARM_PREFIX = 'tab-rotator:refresh:';
+const MIN_PERSISTENT_ALARM_DELAY_MS = 30 * 1000;
+// In MV3 service workers, ext.runtime.getManifest() is available synchronously.
 // Keep a defensive fallback ('0.0.0') only for unexpected early execution; we no
 // longer hard-code a second copy of the release version here — that was a source
 // of drift between manifest.json and background.js during releases.
-const manifestVersion = (typeof chrome !== 'undefined' &&
-  chrome.runtime &&
-  typeof chrome.runtime.getManifest === 'function' &&
-  chrome.runtime.getManifest().version) || '0.0.0';
+const manifestVersion = (typeof ext !== 'undefined' &&
+  ext.runtime &&
+  typeof ext.runtime.getManifest === 'function' &&
+  ext.runtime.getManifest().version) || '0.0.0';
 let lastCandidates = [];
 
 async function ensureDedicatedWindow(entries) {
@@ -47,7 +54,7 @@ async function ensureDedicatedWindow(entries) {
 
   if (ensuredWindowId) {
     try {
-      const win = await chrome.windows.get(ensuredWindowId, { populate: false });
+      const win = await ext.windows.get(ensuredWindowId, { populate: false });
       if (win && win.id) {
         return { id: win.id, created: false };
       }
@@ -65,7 +72,7 @@ async function ensureDedicatedWindow(entries) {
   }
   const firstUrl = normalizedMatchUrl(normalized[0].url);
 
-  const createdWindow = await chrome.windows.create({
+  const createdWindow = await ext.windows.create({
     url: firstUrl,
     focused: false,
     state: 'normal',
@@ -77,7 +84,7 @@ async function ensureDedicatedWindow(entries) {
   if (normalized.length > 1) {
     for (const entry of normalized.slice(1)) {
       const url = normalizedMatchUrl(entry.url);
-      await chrome.tabs.create({ windowId: ensuredWindowId, url, active: false });
+      await ext.tabs.create({ windowId: ensuredWindowId, url, active: false });
     }
   }
 
@@ -90,7 +97,7 @@ async function closeDedicatedWindow() {
   }
 
   try {
-    await chrome.windows.remove(ensuredWindowId);
+    await ext.windows.remove(ensuredWindowId);
   } catch (e) {
     // window may already be closed; ignore
   } finally {
@@ -208,8 +215,7 @@ function tabMatches(tabUrl, targetUrl) {
 
     const hostsMatch =
       tabHost === targetHost ||
-      (tabHost && targetHost && tabHost.endsWith(`.${targetHost}`)) ||
-      (tabHost && targetHost && targetHost.endsWith(`.${tabHost}`));
+      (tabHost && targetHost && tabHost.endsWith(`.${targetHost}`));
 
     if (!hostsMatch) {
       return normalizedTab.startsWith(normalizedTarget);
@@ -272,6 +278,63 @@ function generateRefreshTaskId() {
   return `refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function getAlarmDelayMinutes(delayMs) {
+  return Math.max(delayMs, MIN_PERSISTENT_ALARM_DELAY_MS) / 60000;
+}
+
+async function createAlarm(name, delayMs) {
+  if (!ext.alarms?.create) {
+    return;
+  }
+  try {
+    await ext.alarms.create(name, { delayInMinutes: getAlarmDelayMinutes(delayMs) });
+  } catch (error) {
+    console.error('Could not create alarm:', name, error);
+  }
+}
+
+async function clearAlarm(name) {
+  if (!ext.alarms?.clear) {
+    return;
+  }
+  try {
+    await ext.alarms.clear(name);
+  } catch (error) {
+    console.error('Could not clear alarm:', name, error);
+  }
+}
+
+function refreshAlarmName(taskId) {
+  return `${REFRESH_ALARM_PREFIX}${encodeURIComponent(taskId)}`;
+}
+
+function refreshTaskIdFromAlarmName(name) {
+  if (!name.startsWith(REFRESH_ALARM_PREFIX)) {
+    return '';
+  }
+  try {
+    return decodeURIComponent(name.slice(REFRESH_ALARM_PREFIX.length));
+  } catch (error) {
+    return '';
+  }
+}
+
+async function clearRefreshTaskAlarms() {
+  if (!ext.alarms?.getAll) {
+    return;
+  }
+  try {
+    const alarms = await ext.alarms.getAll();
+    await Promise.all(
+      alarms
+        .filter((alarm) => alarm.name.startsWith(REFRESH_ALARM_PREFIX))
+        .map((alarm) => clearAlarm(alarm.name))
+    );
+  } catch (error) {
+    console.error('Could not clear refresh alarms:', error);
+  }
+}
+
 function normalizeRefreshTasks(tasks) {
   if (!Array.isArray(tasks)) {
     return [];
@@ -309,16 +372,26 @@ function clearRefreshTaskTimers() {
   refreshTaskTimers.clear();
 }
 
+async function clearRefreshTaskSchedules() {
+  clearRefreshTaskTimers();
+  await clearRefreshTaskAlarms();
+}
+
 async function runRefreshTask(taskId) {
+  if (refreshTasksInProgress.has(taskId)) {
+    return;
+  }
+  refreshTasksInProgress.add(taskId);
   const task = currentSettings.refreshTasks.find((item) => item.id === taskId && item.enabled);
   if (!task) {
     refreshTaskTimers.delete(taskId);
+    refreshTasksInProgress.delete(taskId);
     return;
   }
 
   try {
     if (isManageableUrl(task.url) && !isRefreshExcluded(task.url)) {
-      const tabs = await chrome.tabs.query({});
+      const tabs = await ext.tabs.query({});
       const tab = tabs.find((candidate) => {
         const candidateUrls = [];
         if (typeof candidate.pendingUrl === 'string') candidateUrls.push(candidate.pendingUrl);
@@ -326,12 +399,13 @@ async function runRefreshTask(taskId) {
         return candidateUrls.some((url) => isManageableUrl(url) && tabMatches(url, task.url));
       });
       if (tab?.id) {
-        await chrome.tabs.reload(tab.id);
+        await ext.tabs.reload(tab.id);
       }
     }
   } catch (error) {
     console.error('Auto-refresh task failed:', error);
   } finally {
+    refreshTasksInProgress.delete(taskId);
     scheduleRefreshTask(task);
   }
 }
@@ -347,10 +421,12 @@ function scheduleRefreshTask(task) {
     runRefreshTask(task.id).catch((err) => console.error('runRefreshTask error', err));
   }, task.intervalSec * 1000);
   refreshTaskTimers.set(task.id, timer);
+  createAlarm(refreshAlarmName(task.id), task.intervalSec * 1000)
+    .catch((error) => console.error('create refresh alarm error', error));
 }
 
-function scheduleRefreshTasks() {
-  clearRefreshTaskTimers();
+async function scheduleRefreshTasks() {
+  await clearRefreshTaskSchedules();
   currentSettings.refreshTasks = normalizeRefreshTasks(currentSettings.refreshTasks);
   for (const task of currentSettings.refreshTasks) {
     scheduleRefreshTask(task);
@@ -359,12 +435,12 @@ function scheduleRefreshTasks() {
 
 async function getRotationPauseReason() {
   const policy = normalizePausePolicy(currentSettings.pausePolicy);
-  if (policy === 'never' || !chrome.idle?.queryState) {
+  if (policy === 'never' || !ext.idle?.queryState) {
     return null;
   }
 
   try {
-    const state = await chrome.idle.queryState(IDLE_DETECTION_THRESHOLD_SEC);
+    const state = await ext.idle.queryState(IDLE_DETECTION_THRESHOLD_SEC);
     if (policy === 'active' && state === 'active') {
       return 'active';
     }
@@ -384,7 +460,7 @@ async function prepareCustomTargets(entries, openMissing) {
     return [];
   }
 
-  const existingTabs = await chrome.tabs.query(
+  const existingTabs = await ext.tabs.query(
     currentSettings.useDedicatedWindow && ensuredWindowId
       ? { windowId: ensuredWindowId }
       : {}
@@ -411,7 +487,7 @@ async function prepareCustomTargets(entries, openMissing) {
       if (currentSettings.useDedicatedWindow && ensuredWindowId) {
         createOptions.windowId = ensuredWindowId;
       }
-      tab = await chrome.tabs.create(createOptions);
+      tab = await ext.tabs.create(createOptions);
     }
 
     if (tab && !usedIds.has(tab.id)) {
@@ -453,7 +529,7 @@ function persistState(extra = {}) {
 }
 
 async function failStartNotEnoughTargets() {
-  chrome.action.setIcon({ path: iconOff }).catch(() => {});
+  ext.action.setIcon({ path: iconOff }).catch(() => {});
   await persistState({ isRunning: false });
   return { ok: false, error: 'NOT_ENOUGH_TARGETS' };
 }
@@ -481,7 +557,12 @@ function buildCandidatesFromCustomEntries(tabs) {
       if (typeof t.pendingUrl === 'string') candidateUrls.push(t.pendingUrl);
       if (typeof t.url === 'string') candidateUrls.push(t.url);
       return candidateUrls.some(
-        (u) => u && isManageableUrl(u) && !isExcluded(u, excluded) && tabMatches(u, targetUrl)
+        (u) =>
+          u &&
+          !usedIds.has(t.id) &&
+          isManageableUrl(u) &&
+          !isExcluded(u, excluded) &&
+          tabMatches(u, targetUrl)
       );
     });
 
@@ -566,7 +647,7 @@ async function rotateTabs() {
       }
     }
 
-    let tabs = await chrome.tabs.query(
+    let tabs = await ext.tabs.query(
       currentSettings.useDedicatedWindow && ensuredWindowId
         ? { windowId: ensuredWindowId }
         : { currentWindow: true }
@@ -591,7 +672,7 @@ async function rotateTabs() {
           Boolean(currentSettings.openCustomTabs)
         );
       if (rotationTargets.length) {
-        tabs = await chrome.tabs.query(
+        tabs = await ext.tabs.query(
           currentSettings.useDedicatedWindow && ensuredWindowId
             ? { windowId: ensuredWindowId }
             : { currentWindow: true }
@@ -652,7 +733,7 @@ async function rotateTabs() {
       return;
     }
 
-    await chrome.tabs.update(next.tab.id, { active: true });
+    await ext.tabs.update(next.tab.id, { active: true });
 
     const nextTabUrl = typeof next.tab.pendingUrl === 'string' ? next.tab.pendingUrl : next.tab.url;
     if (currentSettings.enableRefreshFlags && next.refresh && !isRefreshExcluded(nextTabUrl)) {
@@ -660,7 +741,7 @@ async function rotateTabs() {
       if (delay > 0) {
         await new Promise((resolve) => setTimeout(resolve, delay * 1000));
       }
-      await chrome.tabs.reload(next.tab.id);
+      await ext.tabs.reload(next.tab.id);
     }
 
     const matchedEntry = findEntryForTab(next.tab);
@@ -691,8 +772,9 @@ async function stopRotator(saveState = true) {
   isRunning = false;
   rotationTargets = [];
   pauseReason = null;
-  chrome.action.setBadgeText({ text: '' }).catch(() => {});
-  chrome.action.setIcon({ path: iconOff }).catch(() => {});
+  await clearAlarm(ROTATION_ALARM_NAME);
+  ext.action.setBadgeText({ text: '' }).catch(() => {});
+  ext.action.setIcon({ path: iconOff }).catch(() => {});
 
   if (saveState) {
     try {
@@ -764,7 +846,7 @@ async function startRotator(options = {}) {
   currentSettings = normalized;
   intervalMs = normalized.intervalSec * 1000;
   pauseReason = null;
-  scheduleRefreshTasks();
+  await scheduleRefreshTasks();
 
   if (currentSettings.useDedicatedWindow && currentSettings.useCustomList) {
     const { id } = await ensureDedicatedWindow(currentSettings.customEntries);
@@ -782,7 +864,7 @@ async function startRotator(options = {}) {
   }
 
   if (!normalized.useCustomList) {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
+    const tabs = await ext.tabs.query({ currentWindow: true });
     const excluded = parseExcludedDomains(normalized.excludeDomains);
     const candidates = (tabs || []).filter((tab) => {
       const url = typeof tab.pendingUrl === 'string' ? tab.pendingUrl : tab.url;
@@ -794,7 +876,7 @@ async function startRotator(options = {}) {
   }
 
   isRunning = true;
-  chrome.action.setIcon({ path: iconOn }).catch(() => {});
+  ext.action.setIcon({ path: iconOn }).catch(() => {});
   scheduleNextTick(intervalMs);
 
   await persistState({ isRunning: true });
@@ -815,15 +897,15 @@ function scheduleNextTick(delayMs) {
   }
   if (currentSettings.badgeCountdown) {
     if (pauseReason) {
-      chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' }).catch(() => {});
-      chrome.action.setBadgeText({ text: PAUSE_BADGE_TEXT }).catch(() => {});
+      ext.action.setBadgeBackgroundColor({ color: '#f59e0b' }).catch(() => {});
+      ext.action.setBadgeText({ text: PAUSE_BADGE_TEXT }).catch(() => {});
     } else {
       const endTime = Date.now() + safeDelay;
-      chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' }).catch(() => {});
+      ext.action.setBadgeBackgroundColor({ color: '#4f46e5' }).catch(() => {});
       const tick = () => {
         const remaining = Math.max(0, endTime - Date.now());
         const sec = Math.max(0, Math.ceil(remaining / 1000));
-        chrome.action.setBadgeText({ text: sec === 0 ? '' : `${sec}` }).catch(() => {});
+        ext.action.setBadgeText({ text: sec === 0 ? '' : `${sec}` }).catch(() => {});
         if (sec === 0 && badgeTimer !== null) {
           clearInterval(badgeTimer);
           badgeTimer = null;
@@ -833,11 +915,25 @@ function scheduleNextTick(delayMs) {
       badgeTimer = setInterval(tick, 500);
     }
   } else {
-    chrome.action.setBadgeText({ text: '' }).catch(() => {});
+    ext.action.setBadgeText({ text: '' }).catch(() => {});
   }
+  createAlarm(ROTATION_ALARM_NAME, safeDelay)
+    .catch((error) => console.error('create rotation alarm error', error));
   timerId = setTimeout(() => {
-    rotateTabs().catch((err) => console.error('rotateTabs error', err));
+    runRotationTick().catch((err) => console.error('rotateTabs error', err));
   }, safeDelay);
+}
+
+async function runRotationTick() {
+  if (rotationTickInProgress) {
+    return;
+  }
+  rotationTickInProgress = true;
+  try {
+    await rotateTabs();
+  } finally {
+    rotationTickInProgress = false;
+  }
 }
 
 async function restoreFromStorage() {
@@ -912,7 +1008,7 @@ async function restoreFromStorage() {
     };
 
     ensuredWindowId = source.ensuredWindowId || source.targetWindowId || null;
-    scheduleRefreshTasks();
+    await scheduleRefreshTasks();
 
     if (
       (!popupOpen || currentSettings.allowRotationWhilePopupOpen) &&
@@ -921,7 +1017,7 @@ async function restoreFromStorage() {
     ) {
       await startRotator(currentSettings);
     } else {
-      chrome.action.setIcon({ path: iconOff }).catch(() => {});
+      ext.action.setIcon({ path: iconOff }).catch(() => {});
     }
   } catch (error) {
     console.error('Не удалось восстановить состояние из storage:', error);
@@ -931,7 +1027,7 @@ async function restoreFromStorage() {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message.type === 'START') {
       explicitCommandInProgress = true;
@@ -1023,11 +1119,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           settings: { ...currentSettings, isRunning, ensuredWindowId }
         }
       });
-      scheduleRefreshTasks();
+      await scheduleRefreshTasks();
       sendResponse({ ok: true, refreshTasks: currentSettings.refreshTasks });
     } else if (message.type === 'REFRESH_TASKS_RESET') {
       currentSettings.refreshTasks = [];
-      clearRefreshTaskTimers();
+      await clearRefreshTaskSchedules();
       await storageArea.set({ refreshTasks: [] });
       sendResponse({ ok: true });
     } else {
@@ -1041,13 +1137,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onStartup.addListener(() => {
+ext.alarms?.onAlarm?.addListener((alarm) => {
+  if (alarm.name === ROTATION_ALARM_NAME) {
+    if (!isRunning) {
+      clearAlarm(ROTATION_ALARM_NAME).catch((err) => console.error('clear stale rotation alarm error', err));
+      return;
+    }
+    if (timerId !== null) {
+      clearTimeout(timerId);
+      timerId = null;
+    }
+    runRotationTick().catch((err) => console.error('rotation alarm error', err));
+    return;
+  }
+
+  const refreshTaskId = refreshTaskIdFromAlarmName(alarm.name || '');
+  if (refreshTaskId) {
+    const timer = refreshTaskTimers.get(refreshTaskId);
+    if (timer) {
+      clearTimeout(timer);
+      refreshTaskTimers.delete(refreshTaskId);
+    }
+    runRefreshTask(refreshTaskId).catch((err) => console.error('refresh alarm error', err));
+  }
+});
+
+ext.runtime.onStartup.addListener(() => {
   restoreFromStorage();
 });
 
 setTimeout(() => restoreFromStorage(), 0);
 
-chrome.commands?.onCommand?.addListener((command) => {
+ext.commands?.onCommand?.addListener((command) => {
   if (explicitCommandInProgress) {
     return;
   }
@@ -1072,7 +1193,7 @@ chrome.commands?.onCommand?.addListener((command) => {
     });
 });
 
-chrome.runtime.onConnect.addListener((port) => {
+ext.runtime.onConnect.addListener((port) => {
   // Two port names are used by popup.js:
   //   - 'popup'  — regular toolbar popup; rotation is paused while it's open
   //                (unless `allowRotationWhilePopupOpen` is set).

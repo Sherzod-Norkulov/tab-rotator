@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status');
   const openInWindowBtn = document.getElementById('openInWindow');
   const darkModeToggleBtn = document.getElementById('darkModeToggle');
+  const themeToneSelect = document.getElementById('themeTone');
   const loadOpenTabsBtn = document.getElementById('loadOpenTabs');
   const autoStartCheckbox = document.getElementById('autoStart');
   const pausePolicySelect = document.getElementById('pausePolicy');
@@ -39,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const refreshTasksContainer = document.getElementById('refreshTasks');
   const storageArea = chrome.storage.local;
   const VALID_THEME_MODES = ['light', 'dark', 'auto'];
+  const VALID_THEME_TONES = ['lavender', 'mint', 'peach', 'sky', 'rose', 'sage'];
   const MANAGEABLE_PROTOCOLS = ['http:', 'https:', 'file:'];
   const systemThemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   let profiles = [];
@@ -51,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let defaultConfigCache = null;
   let isInitializing = true;
   let themeMode = 'auto';
+  let themeTone = 'lavender';
 
   const t = (key, args = []) => {
     const msg = chrome.i18n?.getMessage ? chrome.i18n.getMessage(key, args) : '';
@@ -84,7 +87,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setStatus(text, type) {
     statusEl.textContent = text;
-    statusEl.className = type === 'ok' ? 'ok' : 'error';
+    statusEl.className = ['ok', 'error', 'neutral'].includes(type) ? type : 'neutral';
   }
 
   function flashButton(btn) {
@@ -114,17 +117,31 @@ document.addEventListener('DOMContentLoaded', () => {
       footerVersionEl.textContent = t('footer_version', [version]);
     }
   }
-  function applyThemeMode(mode = 'auto') {
-    themeMode = VALID_THEME_MODES.includes(mode) ? mode : 'auto';
+  function applyTheme() {
     const prefersDark = systemThemeQuery ? systemThemeQuery.matches : false;
     const enabled = themeMode === 'dark' || (themeMode === 'auto' && prefersDark);
+    document.body.classList.toggle('dark', enabled);
+    document.body.dataset.theme = themeMode;
+    document.body.dataset.scheme = enabled ? 'dark' : 'light';
+    document.body.dataset.tone = themeTone;
+    if (themeToneSelect) {
+      themeToneSelect.value = themeTone;
+    }
     if (darkModeToggleBtn) {
       darkModeToggleBtn.textContent = themeMode === 'auto' ? '◐' : enabled ? '☀' : '☾';
       darkModeToggleBtn.title = t(`theme_${themeMode}`);
       darkModeToggleBtn.setAttribute('aria-label', t(`theme_${themeMode}`));
     }
-    document.body.classList.toggle('dark', enabled);
-    document.body.dataset.theme = themeMode;
+  }
+
+  function applyThemeMode(mode = 'auto') {
+    themeMode = VALID_THEME_MODES.includes(mode) ? mode : 'auto';
+    applyTheme();
+  }
+
+  function applyThemeTone(tone = 'lavender') {
+    themeTone = VALID_THEME_TONES.includes(tone) ? tone : 'lavender';
+    applyTheme();
   }
 
   function resolveStoredThemeMode(data = {}) {
@@ -140,6 +157,16 @@ document.addEventListener('DOMContentLoaded', () => {
     return 'auto';
   }
 
+  function resolveStoredThemeTone(data = {}) {
+    if (VALID_THEME_TONES.includes(data.themeTone)) {
+      return data.themeTone;
+    }
+    if (VALID_THEME_TONES.includes(data.themePalette)) {
+      return data.themePalette;
+    }
+    return 'lavender';
+  }
+
   /**
    * Deep-clones JSON-serializable extension config objects.
    * Uses structuredClone when available and a JSON fallback for storage payloads.
@@ -150,7 +177,8 @@ document.addEventListener('DOMContentLoaded', () => {
       : JSON.parse(JSON.stringify(value));
   }
 
-  storageArea.get(['darkMode', 'themeMode'], (data) => {
+  storageArea.get(['darkMode', 'themeMode', 'themeTone', 'themePalette'], (data) => {
+    applyThemeTone(resolveStoredThemeTone(data));
     applyThemeMode(resolveStoredThemeMode(data));
   });
 
@@ -163,6 +191,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     applyThemeMode(nextMode);
     await storageArea.set({ themeMode: nextMode, darkMode: nextMode === 'dark' });
+  });
+
+  themeToneSelect?.addEventListener('change', async () => {
+    const nextTone = VALID_THEME_TONES.includes(themeToneSelect.value)
+      ? themeToneSelect.value
+      : 'lavender';
+    applyThemeTone(nextTone);
+    await storageArea.set({ themeTone: nextTone });
   });
 
   const handleSystemThemeChange = () => {
@@ -204,8 +240,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const entries = Array.isArray(src.customEntries) && src.customEntries.length
       ? src.customEntries
       : src.customUrls || [];
+    const intervalSec = Number(src.intervalSec);
     return {
-      intervalSec: Number.isFinite(src.intervalSec) ? src.intervalSec : 5,
+      intervalSec: Number.isFinite(intervalSec) && intervalSec >= 1 ? intervalSec : 5,
       autoStart: Boolean(src.autoStart),
       useCustomList: Boolean(src.useCustomList) || entries.length > 0,
       customEntries: entries,
@@ -605,7 +642,11 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       return new URL(value).href;
     } catch (e) {
-      return value;
+      try {
+        return new URL(`https://${value}`).href;
+      } catch (error) {
+        return value;
+      }
     }
   }
 
@@ -647,6 +688,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   resetRefreshTasksBtn.addEventListener('click', async () => {
+    if (refreshTasks.length && !confirm(t('confirm_reset_refresh_tasks'))) {
+      setStatus(t('status_action_cancelled'), 'neutral');
+      return;
+    }
     refreshTasks = [];
     await storageArea.set({ refreshTasks });
     renderRefreshTasks();
@@ -821,7 +866,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.isRunning) {
           setStatus(t('status_rotation_running'), 'ok');
         } else {
-          setStatus(t('status_rotation_stopped'), 'error');
+          setStatus(t('status_rotation_stopped'), 'neutral');
         }
         setRunningUi(Boolean(data?.isRunning));
         isInitializing = false;
@@ -979,7 +1024,15 @@ document.addEventListener('DOMContentLoaded', () => {
   deleteProfileBtn.addEventListener('click', async () => {
     const rawValue = profileSelect.value;
     const idx = parseProfileIndex(rawValue);
-    if (rawValue === '' || idx < 0 || idx >= profiles.length) return;
+    if (rawValue === '' || idx < 0 || idx >= profiles.length) {
+      setStatus(t('status_profile_select_first'), 'error');
+      return;
+    }
+    const displayName = profiles[idx].name || `${t('prompt_profile_name_placeholder')} ${idx + 1}`;
+    if (!confirm(t('confirm_delete_profile', [displayName]))) {
+      setStatus(t('status_action_cancelled'), 'neutral');
+      return;
+    }
     profiles.splice(idx, 1);
     renderProfiles();
     profileSelect.value = '';
@@ -1401,7 +1454,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (response && response.ok) {
-        setStatus(t('status_rotation_stopped'), 'error');
+        setStatus(t('status_rotation_stopped'), 'neutral');
         setRunningUi(false);
       } else {
         setStatus(t('status_rotation_stop_fail'), 'error');
