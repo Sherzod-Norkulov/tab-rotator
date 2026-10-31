@@ -11,3 +11,7 @@ Thumbs.db
 # Build outputs (если появятся)
 dist/
 out/
+
+# Python CI helper bytecode is never release source.
+__pycache__/
+*.py[cod]

@@ -1,241 +1,67 @@
 name: Release
-
-# Release-пайплайн Tab Rotator.
-#
-# Запускается только при push в основную ветку (main) — то есть после
-# merge pull request. На сам pull request этот workflow не срабатывает,
-# релизы не создаются до слияния.
-#
-# Последовательность:
-#   1. Job `ci` — переиспользует `.github/workflows/ci.yml` (reusable
-#      workflow) и выполняет все обязательные проверки + сборку ZIP.
-#      Если CI падает, релиз не создаётся.
-#   2. Job `release` — зависит от `ci`:
-#       * читает версию из manifest.json,
-#       * проверяет, существует ли уже GitHub Release или тег vX.Y.Z,
-#       * если GitHub Release уже существует — завершает работу корректно,
-#         без ошибки и без дубликата,
-#       * если существует только тег — переиспользует его для безопасного rerun,
-#       * иначе создаёт git-tag, извлекает секцию из CHANGELOG.md и
-#         публикует GitHub Release с прикреплённым ZIP.
-#
-# Версия — единственный источник истины — manifest.json. Чтобы выпустить
-# новую версию, достаточно поднять version в manifest.json и смерджить PR
-# в main. Никаких ручных команд `git tag`/`gh release create` не нужно.
-
 on:
   push:
-    branches:
-      - main
-
-# Параллельные релизные прогоны по main сериализуются, чтобы избежать
-# гонок при создании тега/релиза. Активный прогон не отменяется —
-# текущий должен корректно завершиться, следующий дождётся окончания.
+    branches: [main]
+  workflow_dispatch:
 concurrency:
   group: release-main
   cancel-in-progress: false
-
 permissions:
   contents: read
-
 jobs:
-  # Шаг 1 — обязательные проверки и сборка. Переиспользуем тот же
-  # workflow, который запускается на pull request, чтобы логика
-  # валидации жила в одном месте.
   ci:
     name: CI (обязательные проверки)
+    if: ${{ github.repository == 'Sherzod-Norkulov/tab-rotator' && github.repository_id == '1114674208' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.actor == 'Sherzod-Norkulov' && github.triggering_actor == 'Sherzod-Norkulov' }}
     uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
-
-  # Шаг 2 — публикация GitHub Release. Запускается только если CI прошёл.
   release:
     name: Публикация GitHub Release
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, tab-rotator-vm]
     timeout-minutes: 10
     permissions:
-      # Требуется для создания тегов и релизов.
       contents: write
-
+    defaults:
+      run:
+        working-directory: ci-${{ github.run_id }}-${{ github.run_attempt }}-release
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # Полный fetch-depth нужен, чтобы корректно создавать
-          # аннотированный тег на точном коммите main.
+          ref: ${{ github.sha }}
+          path: ci-${{ github.run_id }}-${{ github.run_attempt }}-release
           fetch-depth: 0
-          persist-credentials: true
-
-      - name: Получить версию из manifest.json
-        id: version
-        env:
-          CI_VERSION: ${{ needs.ci.outputs.version }}
-          CI_ARTIFACT_NAME: ${{ needs.ci.outputs.artifact-name }}
-        run: |
-          set -euo pipefail
-          version="$(python3 - <<'PY'
-          import json
-          with open('manifest.json', encoding='utf-8') as fh:
-              print(json.load(fh)['version'])
-          PY
-          )"
-          if [[ -z "${version}" ]]; then
-            echo "::error::Не удалось прочитать version из manifest.json"
-            exit 1
-          fi
-          if ! [[ "${version}" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
-            echo "::error::Версия '${version}' из manifest.json не соответствует формату X.Y[.Z[.W]]"
-            exit 1
-          fi
-          if [[ "${CI_VERSION}" != "${version}" ]]; then
-            echo "::error::Версия CI (${CI_VERSION:-пусто}) не совпадает с manifest.json (${version})"
-            exit 1
-          fi
-          expected_artifact="tab-rotator-${version}"
-          if [[ "${CI_ARTIFACT_NAME}" != "${expected_artifact}" ]]; then
-            echo "::error::Имя CI-артефакта (${CI_ARTIFACT_NAME:-пусто}) не совпадает с ожидаемым ${expected_artifact}"
-            exit 1
-          fi
-          tag="v${version}"
-          release_name="Tab Rotator ${tag}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "tag=${tag}"         >> "$GITHUB_OUTPUT"
-          echo "name=${release_name}" >> "$GITHUB_OUTPUT"
-          echo "artifact=${expected_artifact}" >> "$GITHUB_OUTPUT"
-          echo "Версия из manifest.json: ${version}, тег: ${tag}"
-
-      - name: Проверить, существует ли релиз или тег
-        id: check
+          persist-credentials: false
+      - name: Проверить версию и существующий тег
+        id: state
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          release_exists="false"
-          tag_exists="false"
-          # 1) Проверяем GitHub Release по тегу.
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "GitHub Release '$TAG' уже существует — публикация пропускается."
-            release_exists="true"
-          fi
-          # 2) Проверяем git-тег в remote.
-          if git ls-remote --tags --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Git-тег '$TAG' уже существует в origin."
-            tag_exists="true"
-          fi
-          echo "release_exists=${release_exists}" >> "$GITHUB_OUTPUT"
-          echo "tag_exists=${tag_exists}" >> "$GITHUB_OUTPUT"
-
-      - name: Скачать ZIP из CI job
-        if: steps.check.outputs.release_exists == 'false'
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ steps.version.outputs.artifact }}
-          path: dist
-
-      - name: Проверить, что ZIP на месте
-        if: steps.check.outputs.release_exists == 'false'
+          EXPECTED_VERSION: ${{ needs.ci.outputs.version }}
+        run: python3 -I -B scripts/ci/release-state.py
+      - name: Получить проверенный ZIP этого же build
+        if: steps.state.outputs.release_exists == 'false'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          zip_path="dist/tab-rotator-${VERSION}.zip"
-          if [[ ! -f "$zip_path" ]]; then
-            echo "::error::Артефакт не найден: $zip_path"
-            ls -la dist || true
-            exit 1
-          fi
-          if [[ ! -s "$zip_path" ]]; then
-            echo "::error::Артефакт пуст: $zip_path"
-            ls -la dist || true
-            exit 1
-          fi
-          python3 - "$zip_path" "$VERSION" <<'PY'
-          import json
-          import sys
-          import zipfile
-          zip_path, expected = sys.argv[1], sys.argv[2]
-          with zipfile.ZipFile(zip_path) as archive:
-              manifest = json.loads(archive.read('manifest.json').decode('utf-8'))
-          actual = manifest.get('version')
-          if actual != expected:
-              raise SystemExit(f"manifest.json внутри ZIP содержит version={actual!r}, ожидалось {expected!r}")
-          PY
-          echo "Готово к публикации: $zip_path ($(wc -c < "$zip_path") байт)"
-
-      - name: Извлечь секцию из CHANGELOG.md
-        if: steps.check.outputs.release_exists == 'false'
-        id: notes
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          notes_file="release_notes.md"
-          if [[ -f CHANGELOG.md ]]; then
-            # Берём секцию '## [VERSION]' до следующей '## ['.
-            awk -v v="$VERSION" '
-              BEGIN { found = 0 }
-              /^## \[/ {
-                if (found) { exit }
-                # Сопоставляем именно [VERSION] — без учёта даты после тире.
-                if ($0 ~ "^## \\[" v "\\]") { found = 1; next }
-              }
-              found { print }
-            ' CHANGELOG.md > "$notes_file" || true
-          fi
-          # Подчищаем ведущие/замыкающие пустые строки.
-          if [[ -s "$notes_file" ]]; then
-            python3 -c "import pathlib, sys; path = pathlib.Path(sys.argv[1]); text = path.read_text(encoding='utf-8').strip(); path.write_text((text + '\n') if text else '', encoding='utf-8')" "$notes_file"
-            echo "Секция для v${VERSION} найдена в CHANGELOG.md."
-          else
-            # Fallback: короткое авто-описание, если секции нет.
-            printf 'Автоматический релиз Tab Rotator v%s.\n\nПодробные изменения см. в [CHANGELOG.md](./CHANGELOG.md).\n' "$VERSION" > "$notes_file"
-            echo "::warning::Секция для v${VERSION} не найдена в CHANGELOG.md — использован fallback."
-          fi
-          if [[ ! -s "$notes_file" ]]; then
-            echo "::error::Release notes пусты после fallback"
-            exit 1
-          fi
-          echo "path=${notes_file}" >> "$GITHUB_OUTPUT"
-
-      - name: Создать git-тег
-        if: steps.check.outputs.release_exists == 'false' && steps.check.outputs.tag_exists == 'false'
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          git config user.name  'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a "$TAG" -m "Tab Rotator $TAG"
-          git push origin "refs/tags/${TAG}"
-
-      - name: Использовать существующий git-тег
-        if: steps.check.outputs.release_exists == 'false' && steps.check.outputs.tag_exists == 'true'
-        run: echo "Релиз будет создан для уже существующего тега ${{ steps.version.outputs.tag }}."
-
-      - name: Создать GitHub Release и приложить ZIP
-        if: steps.check.outputs.release_exists == 'false'
+          EXPECTED_VERSION: ${{ needs.ci.outputs.version }}
+          EXPECTED_ZIP_SHA256: ${{ needs.ci.outputs.zip-sha256 }}
+        run: python3 -I -B scripts/ci/artifact.py restore
+      - name: Создать аннотированный тег на точном source
+        if: steps.state.outputs.release_exists == 'false' && steps.state.outputs.tag_exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          RELEASE_NAME: ${{ steps.version.outputs.name }}
-          VERSION: ${{ steps.version.outputs.version }}
-          NOTES_PATH: ${{ steps.notes.outputs.path }}
+          TAG: ${{ steps.state.outputs.tag }}
         run: |
           set -euo pipefail
-          zip_path="dist/tab-rotator-${VERSION}.zip"
-          gh release create "$TAG" "$zip_path" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$RELEASE_NAME" \
-            --notes-file "$NOTES_PATH" \
-            --verify-tag
-          echo "Опубликован GitHub Release: $RELEASE_NAME"
-
-      - name: Итог
+          object=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" -f tag="$TAG" -f message="Tab Rotator $TAG" -f object="$GITHUB_SHA" -f type=commit --jq .sha)
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$object" >/dev/null
+      - name: Опубликовать ZIP без повторной сборки
+        if: steps.state.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.state.outputs.tag }}
+          VERSION: ${{ needs.ci.outputs.version }}
         run: |
-          if [[ "${{ steps.check.outputs.release_exists }}" == "true" ]]; then
-            echo "GitHub Release ${{ steps.version.outputs.tag }} уже существует — ничего не делали."
-          else
-            echo "Создан релиз ${{ steps.version.outputs.tag }} с артефактом dist/tab-rotator-${{ steps.version.outputs.version }}.zip"
-          fi
+          set -euo pipefail
+          awk -v v="$VERSION" 'BEGIN {found=0} /^## \[/ {if(found)exit; if(index($0,"["v"]")){found=1;next}} found {print}' CHANGELOG.md >release_notes.md
+          if ! test -s release_notes.md; then printf 'Tab Rotator %s\n' "$TAG" >release_notes.md; fi
+          gh release create "$TAG" "dist/tab-rotator-$VERSION.zip" --repo "$GITHUB_REPOSITORY" --title "Tab Rotator $TAG" --notes-file release_notes.md --verify-tag
+      - name: Подтвердить существующий релиз
+        if: steps.state.outputs.release_exists == 'true'
+        run: echo 'Версия уже опубликована; существующие тег и релиз сохранены.'
