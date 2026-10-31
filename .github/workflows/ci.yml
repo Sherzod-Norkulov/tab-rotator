@@ -13,7 +13,15 @@ permissions:
 jobs:
   build:
     name: Валидация и сборка ZIP
-    if: ${{ github.repository == 'Sherzod-Norkulov/tab-rotator' && github.repository_id == '1114674208' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.actor == 'Sherzod-Norkulov' && github.triggering_actor == 'Sherzod-Norkulov' }}
+    if: >-
+      ${{ github.repository == 'Sherzod-Norkulov/tab-rotator' && github.repository_id == '1114674208' &&
+          github.event.repository.private == false && github.event.repository.owner.login == 'Sherzod-Norkulov' &&
+          github.actor == 'Sherzod-Norkulov' && github.triggering_actor == 'Sherzod-Norkulov' &&
+          ((github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) ||
+           (github.event_name == 'pull_request' && github.base_ref == 'main' &&
+            github.event.pull_request.user.login == 'Sherzod-Norkulov' &&
+            github.event.pull_request.head.repo.id == 1114674208 && github.event.pull_request.head.repo.fork == false &&
+            github.event.pull_request.base.repo.id == 1114674208)) }}
     runs-on: [self-hosted, linux, x64, tab-rotator-vm]
     timeout-minutes: 15
     outputs:

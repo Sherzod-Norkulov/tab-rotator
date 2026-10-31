@@ -30,9 +30,14 @@ COPY_ZIP
 if [[ ${BASH_SOURCE[0]} != "$0" ]]; then
   return 0
 fi
-python3 -I -B scripts/ci/artifact.py context
+if [[ ${GITHUB_EVENT_NAME:-} == pull_request ]]; then
+  python3 -I -B scripts/ci/pr-context.py
+else
+  python3 -I -B scripts/ci/artifact.py context
+fi
 python3 -B scripts/ci/test-handoff.py
 python3 -I -B scripts/ci/test-release-state.py
+python3 -I -B scripts/ci/test-pr-context.py
 python3 -I -B scripts/ci/test-tracked-package.py
 for file in manifest.json _locales/en/messages.json _locales/ru/messages.json _locales/uz/messages.json; do
   python3 -c 'import json,sys;json.load(open(sys.argv[1],encoding="utf-8"))' "$file"
@@ -43,5 +48,9 @@ test -x "$node_binary"
 "$node_binary" --check background.js
 "$node_binary" --check popup.js
 package_tracked
-python3 -I -B scripts/ci/artifact.py store
+# PR output is disposable validation only. The release handoff continues to
+# reject every PR context and remains bound to release.yml/main/same attempt.
+if [[ ${GITHUB_EVENT_NAME:-} != pull_request ]]; then
+  python3 -I -B scripts/ci/artifact.py store
+fi
 git diff --exit-code HEAD
