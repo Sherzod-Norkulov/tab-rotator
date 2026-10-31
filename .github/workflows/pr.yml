@@ -1,25 +1,21 @@
-name: PR Checks
-
-# Wrapper для pull request: создаёт тот самый required check
-# `CI (обязательные проверки) / Валидация и сборка ZIP`, который
-# ожидает branch protection, и переиспользует общий ci.yml.
-
+name: Pull request
 on:
   pull_request:
-    branches:
-      - main
-
-# Для одного PR держим только самый свежий прогон.
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 concurrency:
-  group: pr-checks-${{ github.event.pull_request.number }}
+  group: tab-pr-${{ github.event.number }}
   cancel-in-progress: true
-
 permissions:
   contents: read
-
 jobs:
   ci:
     name: CI (обязательные проверки)
+    if: >-
+      ${{ github.repository == 'Sherzod-Norkulov/tab-rotator' && github.repository_id == '1114674208' &&
+          github.event.repository.private == false && github.event.repository.owner.login == 'Sherzod-Norkulov' &&
+          github.actor == 'Sherzod-Norkulov' && github.triggering_actor == 'Sherzod-Norkulov' &&
+          github.event.sender.login == 'Sherzod-Norkulov' && github.event.pull_request.user.login == 'Sherzod-Norkulov' &&
+          github.base_ref == 'main' && github.event.pull_request.head.repo.id == 1114674208 &&
+          github.event.pull_request.head.repo.fork == false && github.event.pull_request.base.repo.id == 1114674208 }}
     uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read

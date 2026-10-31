@@ -244,29 +244,33 @@ Git Bash.
 
 ## Автоматизация CI/CD
 
-В репозитории настроены два GitHub Actions workflow:
+Проверки исполняются официальным repo-scoped runner `tab-rotator-vm` на
+собственной ВМ через общий ограничитель ресурсов. Docker и установка
+зависимостей не требуются.
 
-- **CI** — `.github/workflows/ci.yml`. Запускается на каждый pull
-  request в `main` и на push в `main`. Валидирует `manifest.json` и
-  `_locales/*/messages.json`, проверяет формат версии и собирает
-  релизный ZIP через `scripts/package.sh`, после чего публикует его
-  артефактом. Workflow также объявлен как reusable (`workflow_call`) —
-  его переиспользует release workflow. Подходит как required check в
-  branch protection для `main`.
-- **Release** — `.github/workflows/release.yml`. Запускается только на
-  push в `main` (т. е. после merge PR). Сначала полностью прогоняет
-  CI; если проверки прошли, читает версию из `manifest.json`,
-  сверяет её с ZIP-артефактом, создаёт отсутствующий тег `v<version>`
-  и публикует GitHub Release с именем `Tab Rotator v<version>`, прикладывая
-  `dist/tab-rotator-<version>.zip`. Release notes берутся из секции
-  `## [<version>]` в `CHANGELOG.md`. Если тег уже существует, workflow
-  корректно завершается без дубликата. Параллельные релизные прогоны
-  сериализуются через `concurrency: release-main`.
+- **Pull request** — `.github/workflows/pr.yml` вызывает reusable `ci.yml`
+  только для PR владельца из этого же public repository в `main`.
+  Actor/triggering actor и автор PR должны быть владельцем; forks исключены.
+  Проверяются точные merge SHA и оба родителя base/head до выполнения recipes.
+  Required check: **CI (обязательные проверки) / Валидация и сборка ZIP**.
+  PR имеет `contents: read`, не получает release/OIDC credentials, не
+  записывает release handoff и не создаёт tags/releases.
+- **CI** — `.github/workflows/ci.yml` имеет только `workflow_call`.
+  Проверяет JSON, JavaScript syntax и небольшие unit regressions; ZIP собирается
+  из committed runtime files и committed `scripts/package.sh` через
+  изолированный `git archive HEAD`, без modified/untracked/ignored payload.
+- **Release** — `.github/workflows/release.yml` принимает owner push в `main`
+  или owner manual main. Повторно проверяет уже main source и получает ZIP
+  только из своего exact SHA/run/attempt producer manifest на ВМ; PR ZIP для
+  release не используется. GitHub artifact storage не требуется. После
+  проверки checksum/version публикует ещё не выпущенную версию. Существующий
+  `v1.4.0` и его assets сохраняются; unpublished tag обязан указывать на exact
+  source SHA. Параллельные выпуски сериализуются через `release-main`.
 
-Из этого следует простое правило выпуска: поднять `"version"` в
-`manifest.json`, добавить секцию в `CHANGELOG.md`, смерджить PR в
-`main` — всё остальное сделает автоматизация. Подробнее см.
-[`RELEASE.md`](RELEASE.md#10-автоматизация-cicd-github-actions).
+Для новой версии обновить `manifest.json` и `CHANGELOG.md`, пройти required
+PR check и ручной QA, затем merge в `main`. GitHub Release не подтверждает
+работу установленного расширения и не публикует его в Chrome Web Store.
+Точный процесс и ограничения — в [`RELEASE.md`](RELEASE.md).
 
 ## Лицензия
 
